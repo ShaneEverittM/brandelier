@@ -1,3 +1,4 @@
+import socket
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -7,7 +8,10 @@ BUS = 1
 BASE_ADDRESS = 0x08
 NUM_DEVICES = 5
 
-PI = pigpio.pi("72.205.124.193", 8888)
+if socket.gethostname() == "pi":
+    PI = pigpio.pi()
+else:
+    PI = pigpio.pi("72.205.124.193", 8888)
 
 
 @dataclass(frozen=True, eq=True)
@@ -46,6 +50,4 @@ class I2CDevice:
 
 def enumerate() -> Mapping[Position, I2CDevice]:
     """Return an iteratable over all present I2C devices."""
-    return {
-        Position(i * 4, 0): I2CDevice(BASE_ADDRESS + i) for i in range(NUM_DEVICES)
-    }
+    return {Position(i * 4, 0): I2CDevice(BASE_ADDRESS + i) for i in range(NUM_DEVICES)}
