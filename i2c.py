@@ -1,6 +1,7 @@
 import time
 import logging
 import os
+from typing import final
 from smbus2 import SMBus, i2c_msg
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ class I2CWriteError(Exception):
         )
 
 
+@final
 class Bus:
     def __init__(self, bus: int, delay: float = 0.020, retries: int = 3):
         self.bus = SMBus(bus)
@@ -71,6 +73,7 @@ class Bus:
         log.error("I2C write failed after %d retries", self.retries)
 
 
+@final
 class I2CDevice:
     def __init__(self, bus: Bus, address: int):
         self.bus = bus
@@ -84,6 +87,6 @@ class I2CDevice:
 
 
 def get_all() -> Mapping[Position, I2CDevice]:
-    """Return an iterable over all present I2C devices."""
+    """Return a mapping of all present I2C devices and their positions."""
     bus = Bus(BUS)
     return {Position(i * 4, 0): I2CDevice(bus, BASE_ADDRESS + i) for i in range(NUM_DEVICES)}
