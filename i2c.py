@@ -1,17 +1,25 @@
-import socket
+import time
+import logging
+import os
+from smbus2 import SMBus, i2c_msg
 from collections.abc import Mapping
 from dataclasses import dataclass
+from rich.logging import RichHandler
 
-import pigpio
+LEVEL = os.getenv("LOGLEVEL", "INFO").upper()
+FORMAT = "%(message)s"
+logging.basicConfig(
+    level=LEVEL,
+    format=FORMAT,
+    datefmt="[%X]",
+    handlers=[RichHandler()]
+)
+
+log = logging.getLogger(__name__)
 
 BUS = 1
 BASE_ADDRESS = 0x08
 NUM_DEVICES = 5
-
-if socket.gethostname() == "pi":
-    PI = pigpio.pi()
-else:
-    PI = pigpio.pi("72.205.124.193", 8888)
 
 
 @dataclass(frozen=True, eq=True)
@@ -33,21 +41,49 @@ class I2CWriteError(Exception):
         )
 
 
+class Bus:
+    def __init__(self, bus: int, delay: float = 0.020, retries: int = 3):
+        self.bus = SMBus(bus)
+        self.delay = delay
+        self.retries = retries
+
+    def write(self, address: int, data: bytes):
+        log.debug(
+            "Writing to I2C device at address %d with data %s",
+            address,
+            [hex(byte) for byte in data]
+        )
+
+        w = i2c_msg.write(address, data)
+        retries = 0
+        while retries < self.retries:
+            try:
+                self.bus.i2c_rdwr(w)
+                time.sleep(self.delay * (retries + 1))
+            except OSError:
+                if retries > 1:
+                    log.warning("I2C write failed after %d retries, retrying...", retries)
+                retries += 1
+                continue
+            else:
+                return
+
+        log.error("I2C write failed after %d retries", self.retries)
+
+
 class I2CDevice:
-    def __init__(self, address: int):
-        fd = PI.i2c_open(BUS, address)
-        if fd < 1:
-            raise I2COpenError(f"Could not open I2C device at '{address}'")
-        self.fd = fd
+    def __init__(self, bus: Bus, address: int):
+        self.bus = bus
         self.address = address
 
     def write(self, data: bytes):
         try:
-            PI.i2c_write_device(self.fd, data)
-        except pigpio.error as e:
+            self.bus.write(self.address, data)
+        except OSError as e:
             raise I2CWriteError(self.address) from e
 
 
-def enumerate() -> Mapping[Position, I2CDevice]:
-    """Return an iteratable over all present I2C devices."""
-    return {Position(i * 4, 0): I2CDevice(BASE_ADDRESS + i) for i in range(NUM_DEVICES)}
+def get_all() -> Mapping[Position, I2CDevice]:
+    """Return an iterable over all present I2C devices."""
+    bus = Bus(BUS)
+    return {Position(i * 4, 0): I2CDevice(bus, BASE_ADDRESS + i) for i in range(NUM_DEVICES)}
