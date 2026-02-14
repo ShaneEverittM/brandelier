@@ -30,7 +30,6 @@ def constrain(val: int, small: int, large: int) -> int:
 class Bulb:
     def __init__(self, device: I2CDevice, scale: int = DEFAULT_SCALE):
         self.device = device
-
         if not 0 <= scale <= 16:
             raise ValueError("Invalid scale, must be between 0 and 16")
         self.scale = scale
@@ -60,13 +59,13 @@ def driver(
         for position, bulb in bulbs.items():
             extension = extensions(position.x, position.y, t)
             bulb.set_position(int(extension))
-        time.sleep(0.1)
+        time.sleep(0.04)
 
 
 def main():
     try:
-        bulbs = {position: Bulb(device) for position, device in i2c.enumerate().items()}
-        driver(bulbs, lambda x, _, t: 3000 * sin(x + 0.25 * t) + 3100)
+        bulbs = {position: Bulb(device) for position, device in i2c.get_all().items()}
+        driver(bulbs, lambda x, _, t: 3000 * sin(0.25 * x + 0.25 * t) + 3100)
     except KeyboardInterrupt:
         return
     except Exception as e:
@@ -74,4 +73,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO)
+
     main()

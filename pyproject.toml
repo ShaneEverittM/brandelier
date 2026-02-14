@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "pigpio>=1.78",
+    "smbus2>=0.6.0",
 ]
