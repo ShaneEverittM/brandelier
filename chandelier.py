@@ -1,3 +1,6 @@
+from collections.abc import Callable, Mapping
+from math import sin
+import time
 from typing import final
 
 import i2c
@@ -25,15 +28,16 @@ def constrain(val: int, small: int, large: int) -> int:
 
 @final
 class Bulb:
-    def __init__(
-        self, position: Position, device: I2CDevice, scale: int = DEFAULT_SCALE
-    ):
+    def __init__(self, device: I2CDevice, scale: int = DEFAULT_SCALE):
         self.device = device
-        self.position = position
 
         if not 0 <= scale <= 16:
             raise ValueError("Invalid scale, must be between 0 and 16")
         self.scale = scale
+        
+    def zero(self):
+        data = [0x00, 0x00, 0x09, 0x00]
+        self.device.write(bytes(data))
 
     def set_position(self, position: int):
         # 16-bit max but with scale extra bits of range, scaled by those extra bits.
@@ -42,13 +46,27 @@ class Bulb:
         self.device.write(data)
 
 
+def driver(
+    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
+):
+    for bulb in bulbs.values():
+        bulb.zero()
+    
+    # TODO: Query position to know when zeroed.
+    time.sleep(10)
+    
+    while True:
+        t = time.monotonic()
+        for position, bulb in bulbs.items():
+            extension = extensions(position.x, position.y, t)
+            bulb.set_position(int(extension))
+        time.sleep(0.1)
+
+
 def main():
     try:
-        bulbs = [Bulb(position, device) for position, device in i2c.enumerate().items()]
-        while True:
-            position = input("Input position: ")  # encoder ticks, a thousand to an inch
-            for bulb in bulbs:
-                bulb.set_position(int(position))
+        bulbs = {position: Bulb(device) for position, device in i2c.enumerate().items()}
+        driver(bulbs, lambda x, _, t: 3000 * sin(x + 0.25 * t) + 3100)
     except KeyboardInterrupt:
         return
     except Exception as e:
