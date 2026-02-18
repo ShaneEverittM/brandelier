@@ -1,0 +1,16 @@
+[project]
+name = "chandelier"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pigpio>=1.78",
+    "rich>=14.3.2",
+    "smbus2>=0.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.38.0",
+]
