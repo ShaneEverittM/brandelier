@@ -29,16 +29,39 @@ class Position:
     y: int
 
 
-class I2COpenError(Exception):
+class I2CError(Exception):
+    """Base class for all I2C errors."""
+    pass
+
+
+class I2COpenError(I2CError):
     """Raised when the given I2C device could not be opened."""
 
 
-class I2CWriteError(Exception):
+class I2CWriteError(I2CError):
     """Raised when the given I2C device could not be written to."""
 
     def __init__(self, address: int) -> None:
         super().__init__(
             f"An error occurred while writing to I2C device at address {address}"
+        )
+
+
+class I2CReadError(I2CError):
+    """Raised when the given I2C device could not be read from."""
+
+    def __init__(self, address: int) -> None:
+        super().__init__(
+            f"An error occurred while reading from I2C device at address {address}"
+        )
+
+
+class I2CReadRetryError(I2CError):
+    """Raised when the given I2C device could not be read from after retrying."""
+
+    def __init__(self, address: int, retries: int) -> None:
+        super().__init__(
+            f"An error occurred while reading from I2C device at address {address} after {retries} tries"
         )
 
 
@@ -72,6 +95,22 @@ class Bus:
 
         log.error("I2C write failed after %d retries", self.retries)
 
+    def read(self, address: int, amount: int) -> bytes:
+        r = i2c_msg.read(address, amount)
+        retries = 0
+        while retries < self.retries:
+            try:
+                self.bus.i2c_rdwr(r)
+                return bytes(r)
+            except OSError:
+                time.sleep(self.delay * (retries + 1))
+                if retries > 1:
+                    log.warning("I2C read failed after %d retries, retrying...", retries)
+                retries += 1
+                continue
+
+        raise I2CReadRetryError(address, self.retries)
+
 
 @final
 class I2CDevice:
@@ -84,6 +123,12 @@ class I2CDevice:
             self.bus.write(self.address, data)
         except OSError as e:
             raise I2CWriteError(self.address) from e
+
+    def read(self, amount: int = 4) -> bytes:
+        try:
+            return self.bus.read(self.address, amount)
+        except OSError as e:
+            raise I2CReadError(self.address) from e
 
 
 def get_all() -> Mapping[Position, I2CDevice]:
