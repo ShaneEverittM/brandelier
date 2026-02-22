@@ -72,6 +72,24 @@ class Bus:
 
         log.error("I2C write failed after %d retries", self.retries)
 
+    def read(self, address: int) -> tuple[float, bool, bool]:
+        r = i2c_msg.read(address, 4)
+        retries = 0
+        while retries < self.retries:
+            try:
+                self.bus.i2c_rdwr(r)
+                time.sleep(self.delay * (retries + 1))
+                data = [x for x in bytes(r)]
+                if data[2] > 1 or data [3] > 1:
+                    log.warning("I2C read bad data")
+                    raise OSError
+                return (data[0]+data[1]/256, bool(data[2]), bool(data[3]))
+            except OSError:
+                if retries > 1:
+                    log.warning("I2C read failed after %d retries, retrying...", retries)
+                retries += 1
+                continue
+        raise RuntimeError()
 
 @final
 class I2CDevice:
@@ -82,6 +100,12 @@ class I2CDevice:
     def write(self, data: bytes):
         try:
             self.bus.write(self.address, data)
+        except OSError as e:
+            raise I2CWriteError(self.address) from e
+        
+    def read(self):
+        try:
+            return self.bus.read(self.address)
         except OSError as e:
             raise I2CWriteError(self.address) from e
 

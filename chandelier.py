@@ -28,9 +28,14 @@ def constrain(val: int, small: int, large: int) -> int:
 class Bulb:
     def __init__(self, device: I2CDevice):
         self.device = device
+        self.real_extension: float
+        self.light_on: bool
+        self.zeroing: bool
+        self.refresh_data()
+        self.lagging_warning: bool = False
         
     def zero(self):
-        data = [0x00, 0x00, 0x09, 0x00]
+        data = [0x00, 0x00, 0x09, 0x00] # set position to zero and command zeroing routine
         self.device.write(bytes(data))
 
     def set_position(self, position: float):
@@ -39,21 +44,36 @@ class Bulb:
         data = position.to_bytes(2, byteorder="big") + bytes(2)
         self.device.write(data)
 
+    def refresh_data(self):
+        (self.real_extension, self.light_on, self.zeroing) = self.device.read()
+
 
 def driver(
     bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
 ):
     for bulb in bulbs.values():
         bulb.zero()
+    while True:
+        for bulb in bulbs.values():
+            bulb.refresh_data()
+        if all([not bulb.zeroing for bulb in bulbs.values()]):
+            break
+        time.sleep(0.1)
     
     # TODO: Query position to know when zeroed.
-    time.sleep(10)
     
+    last_check = 0
     while True:
         t = time.monotonic()
         for position, bulb in bulbs.items():
             extension = extensions(position.x, position.y, t)
             bulb.set_position(extension)
+            if t-last_check > 1:
+                bulb.refresh_data()
+                print(f"""commanded extension: {extension}
+        real extension: {bulb.real_extension}
+                lagging by {extension - bulb.real_extension}""")
+                last_check = t
         time.sleep(0.04)
 
 
@@ -69,6 +89,6 @@ def main():
 
 if __name__ == "__main__":
     import logging
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
 
     main()
