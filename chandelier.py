@@ -23,17 +23,28 @@ special_dict = {
 }
 
 
+@final
+class ExtensionDriftWarning(Warning):
+    def __init__(self, *, expected: float, actual: float):
+        super().__init__(f"Extension drifting, expected {expected} but got {actual}")
+        self.expected = expected
+        self.actual = actual
+
+
 def constrain(val: int, small: int, large: int) -> int:
     return min(max(val, small), large)
 
 
 @final
 class Bulb:
-    def __init__(self, device: I2CDevice):
+    def __init__(self, device: I2CDevice, extension_tolerance: float = 1.0):
         self.device = device
         self.real_extension: float = 0.0
         self.light_on: bool = False
         self.zeroing: bool = False
+
+        self.extension_tolerance = extension_tolerance
+        self.last_requested_extension: float = 0.0
         self.lagging_warning: bool = False
 
     def zero(self):
@@ -41,13 +52,14 @@ class Bulb:
         data = [0x00, 0x00, 0x09, 0x00]
         self.device.write(bytes(data))
 
-    def set_position(self, position: float):
+    def set_extension(self, extension: float):
         # 16-bits: 1 byte for inches, 1 byte for fractions of an inch
-        position = constrain(int(position * 256), 0, 0xFFFF)
-        data = position.to_bytes(2, byteorder="big") + bytes(2)
+        self.last_requested_extension = extension
+        extension = constrain(int(extension * 256), 0, 0xFFFF)
+        data = extension.to_bytes(2, byteorder="big") + bytes(2)
         self.device.write(data)
 
-    def refresh(self):
+    def refresh(self, report_drift: bool = False):
         try:
             real_extension, light_on, zeroing = self.read_data()
         except ValueError as e:
@@ -57,6 +69,15 @@ class Bulb:
         self.real_extension = real_extension
         self.light_on = light_on
         self.zeroing = zeroing
+
+        if (
+            abs(self.last_requested_extension - self.real_extension)
+            > self.extension_tolerance
+        ):
+            if report_drift:
+                raise ExtensionDriftWarning(
+                    expected=self.last_requested_extension, actual=self.real_extension
+                )
 
     def read_data(self) -> tuple[float, bool, bool]:
         data = self.device.read(amount=4)
@@ -72,23 +93,37 @@ def driver(
         bulb.zero()
         bulb.refresh()
 
+    timeout = 10.0
+    elapsed = 0.0
     while any(bulb.zeroing for bulb in bulbs.values()):
         for bulb in bulbs.values():
             bulb.refresh()
         time.sleep(0.1)
+        elapsed += 0.1
+        if elapsed > timeout:
+            raise TimeoutError("Timed out zeroing")
 
+    settle_time = 5.0
+    start = time.monotonic()
     last_check = 0
     while True:
         t = time.monotonic()
         for position, bulb in bulbs.items():
             extension = extensions(position.x, position.y, t)
-            bulb.set_position(extension)
-            if t - last_check > 1:
-                bulb.refresh()
-                print(f"commanded extension: {extension}")
-                print(f"real extension: {bulb.real_extension}")
-                print(f"lagging by {extension - bulb.real_extension}")
-                last_check = t
+            bulb.set_extension(extension)
+
+        if t - last_check > 1:
+            for position, bulb in bulbs.items():
+                try:
+                    settled = t - start > settle_time
+                    bulb.refresh(report_drift=settled)
+                except ExtensionDriftWarning as w:
+                    print(f"Extension drift for bulb at position {position}:")
+                    print(f"    commanded extension: {w.expected}")
+                    print(f"    real extension: {w.actual}")
+                    print(f"    lagging by {w.actual - w.expected}")
+            last_check = t
+
         time.sleep(0.04)
 
 
