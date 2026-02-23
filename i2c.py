@@ -1,12 +1,13 @@
 import time
 import logging
 import os
-from crccheck.crc import Crc8
 from typing import final
 from smbus2 import SMBus, i2c_msg
 from collections.abc import Mapping
 from dataclasses import dataclass
 from rich.logging import RichHandler
+
+from crc import Crc
 
 LEVEL = os.getenv("LOGLEVEL", "INFO").upper()
 FORMAT = "%(message)s"
@@ -74,7 +75,7 @@ class Bus:
         self.retries = retries
 
     def write(self, address: int, data: bytes):
-        crc = Crc8()
+        crc = Crc()
         crc.process(address.to_bytes())
         crc.process(data)
         checksum = crc.finalbytes()
@@ -109,7 +110,7 @@ class Bus:
                 data = bytes(r)
                 checksum = data[-1]
                 data = data[:-1]
-                crc = Crc8()
+                crc = Crc()
                 crc.process(address.to_bytes())
                 crc.process(data)
                 if crc.final() != checksum:
