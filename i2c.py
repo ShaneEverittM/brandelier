@@ -1,7 +1,7 @@
 import time
 import logging
 import os
-import crc8
+from crccheck.crc import Crc8
 from typing import final
 from smbus2 import SMBus, i2c_msg
 from collections.abc import Mapping
@@ -74,10 +74,10 @@ class Bus:
         self.retries = retries
 
     def write(self, address: int, data: bytes):
-        hash = crc8.crc8()
-        hash.update(address.to_bytes())
-        hash.update(data)
-        checksum: bytes = hash.digest()
+        crc = Crc8()
+        crc.process(address.to_bytes())
+        crc.process(data)
+        checksum = crc.finalbytes()
         log.debug(
             "Writing to I2C device at address %d with data %s",
             address,
@@ -109,10 +109,10 @@ class Bus:
                 data = bytes(r)
                 checksum = data[-1]
                 data = data[:-1]
-                hash = crc8.crc8()
-                hash.update(address.to_bytes())
-                hash.update(data)
-                if hash.digest() != checksum.to_bytes():
+                crc = Crc8()
+                crc.process(address.to_bytes())
+                crc.process(data)
+                if crc.final() != checksum:
                     raise I2CReadError(address)
                 return data
             except OSError:
