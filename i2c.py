@@ -1,6 +1,7 @@
 import time
 import logging
 import os
+import crc8
 from typing import final
 from smbus2 import SMBus, i2c_msg
 from collections.abc import Mapping
@@ -73,13 +74,17 @@ class Bus:
         self.retries = retries
 
     def write(self, address: int, data: bytes):
+        hash = crc8.crc8()
+        hash.update(address.to_bytes())
+        hash.update(data)
+        checksum: bytes = hash.digest()
         log.debug(
             "Writing to I2C device at address %d with data %s",
             address,
-            [hex(byte) for byte in data]
+            [hex(byte) for byte in data] + [hex(checksum[0])]
         )
 
-        w = i2c_msg.write(address, data)
+        w = i2c_msg.write(address, data + checksum)
         retries = 0
         while retries < self.retries:
             try:
@@ -96,16 +101,30 @@ class Bus:
         log.error("I2C write failed after %d retries", self.retries)
 
     def read(self, address: int, amount: int) -> bytes:
-        r = i2c_msg.read(address, amount)
+        r = i2c_msg.read(address, amount + 1)
         retries = 0
         while retries < self.retries:
             try:
                 self.bus.i2c_rdwr(r)
-                return bytes(r)
+                data = bytes(r)
+                checksum = data[-1]
+                data = data[:-1]
+                hash = crc8.crc8()
+                hash.update(address.to_bytes())
+                hash.update(data)
+                if hash.digest() != checksum.to_bytes():
+                    raise I2CReadError(address)
+                return data
             except OSError:
                 time.sleep(self.delay * (retries + 1))
                 if retries > 1:
                     log.warning("I2C read failed after %d retries, retrying...", retries)
+                retries += 1
+                continue
+            except I2CReadError:
+                time.sleep(self.delay * (retries + 1))
+                if retries > 1:
+                    log.warning("I2C read bad data after %d retries, retrying...", retries)
                 retries += 1
                 continue
 

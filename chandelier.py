@@ -5,7 +5,7 @@ import time
 from typing import final
 
 import i2c
-from i2c import I2CDevice, Position
+from i2c import I2CDevice, Position, I2CReadRetryError
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class Bulb:
     def refresh(self, report_drift: bool = False):
         try:
             real_extension, light_on, zeroing = self.read_data()
-        except ValueError as e:
+        except I2CReadRetryError as e:
             log.warning(e)
             return
 
@@ -81,8 +81,6 @@ class Bulb:
 
     def read_data(self) -> tuple[float, bool, bool]:
         data = self.device.read(amount=4)
-        if data[2] > 1 or data[3] > 1:
-            raise ValueError("Invalid I2C data")
         return data[0] + data[1] / 256, bool(data[2]), bool(data[3])
 
 
