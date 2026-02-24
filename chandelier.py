@@ -1,26 +1,31 @@
+from abc import ABC
+from dataclasses import dataclass
+from enum import IntEnum
 import logging
 from collections.abc import Callable, Mapping
 from math import sin
 import time
-from typing import final
+from typing import final, ClassVar
+from typing_extensions import Self, override
 
 import i2c
 from i2c import I2CDevice, Position, I2CReadRetryError
 
 log = logging.getLogger(__name__)
 
-special_dict = {
-    "p": 0,  # position
-    "b": 1,  # brightness
-    "s": 2,  # save position
-    "m": 3,  # max analogWrite value (max speed out of 255)
-    "k": 4,  # kp
-    "i": 5,  # ki
-    "d": 6,  # kd
-    "o": 7,  # kp_pos (ramp rate when close)
-    "x": 8,  # max speed (in/s divide by 10)
-    "z": 9,  # command zero
-}
+
+class OpCode(IntEnum):
+    SET_EXTENSION = 0
+    SET_BRIGHTNESS = 1
+    SAVE_POSITION = 2
+    SET_MAX_VALUE = 3
+    SET_KP = 4
+    SET_KI = 5
+    SET_KD = 6
+    SET_KP_POS = 7
+    SET_MAX_SPEED = 8
+    ZERO = 9
+    SET_MAX_EXTENSION = 10
 
 
 @final
@@ -33,6 +38,58 @@ class ExtensionDriftWarning(Warning):
 
 def constrain(val: int, small: int, large: int) -> int:
     return min(max(val, small), large)
+
+
+class Command(ABC):
+    def __init__(self, extension: float):
+        self._extension: int = constrain(int(extension * 256), 0, 0xFFFF)
+
+    def opcode(self) -> OpCode:
+        return OpCode.SET_EXTENSION
+
+    def argument(self) -> int:
+        return 0x00
+
+    @final
+    def encode(self) -> bytes:
+        [lsb, msb] = self._extension.to_bytes(2, byteorder="big")
+        opcode = self.opcode()
+        argument = self.argument()
+        data = bytes([lsb, msb, opcode, argument])
+        return data
+
+
+@final
+class SetExtension(Command):
+    pass
+
+
+@final
+class SetBrightness(Command):
+    def __init__(self, extension: float, value: int):
+        super().__init__(extension)
+        self._value = value
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_BRIGHTNESS
+
+    @override
+    def argument(self) -> int:
+        return self._value
+
+
+@dataclass
+class Response:
+    extension: float
+    light: bool
+    zeroing: bool
+
+    LENGTH: ClassVar[int] = 4
+
+    @classmethod
+    def parse(cls, data: bytes) -> Self:
+        return cls(data[0] + data[1] / 256, bool(data[2]), bool(data[3]))
 
 
 @final
@@ -59,33 +116,41 @@ class Bulb:
         data = extension.to_bytes(2, byteorder="big") + bytes(2)
         self.device.write(data)
 
+    def write(self, command: Command) -> None:
+        data = command.encode()
+        self.device.write(data)
+
+    def read(self) -> Response:
+        data = self.device.read(amount=Response.LENGTH)
+        return Response.parse(data)
+
+    def transfer(self, command: Command) -> Response:
+        self.write(command)
+        return self.read()
+
     def refresh(self, report_drift: bool = False):
         try:
-            real_extension, light_on, zeroing = self.read_data()
+            response = self.read()
         except I2CReadRetryError as e:
             log.warning(e)
             return
 
-        self.real_extension = real_extension
-        self.light_on = light_on
-        self.zeroing = zeroing
+        self.real_extension = response.extension
+        self.light_on = response.light
+        self.zeroing = response.zeroing
 
         if (
-            abs(self.last_requested_extension - self.real_extension)
-            > self.extension_tolerance
+                abs(self.last_requested_extension - self.real_extension)
+                > self.extension_tolerance
         ):
             if report_drift:
                 raise ExtensionDriftWarning(
                     expected=self.last_requested_extension, actual=self.real_extension
                 )
 
-    def read_data(self) -> tuple[float, bool, bool]:
-        data = self.device.read(amount=4)
-        return data[0] + data[1] / 256, bool(data[2]), bool(data[3])
-
 
 def driver(
-    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
+        bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
 ):
     for bulb in bulbs.values():
         bulb.zero()

@@ -23,6 +23,7 @@ dependencies = [
     { name = "pigpio" },
     { name = "rich" },
     { name = "smbus2" },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -37,6 +38,7 @@ requires-dist = [
     { name = "pigpio", specifier = ">=1.78" },
     { name = "rich", specifier = ">=14.3.2" },
     { name = "smbus2", specifier = ">=0.6.0" },
+    { name = "typing-extensions", specifier = ">=4.15.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -154,4 +156,13 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/4e/36/afafd43770caae69f04e21402552a8f94a072def46a002fab9357f4852ce/smbus2-0.6.0.tar.gz", hash = "sha256:9b5ff1e998e114730f9dfe0c4babbef06c92468cfb61eaa684e30f225661b95b", size = 17403, upload-time = "2025-12-20T09:02:52.017Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a5/cf/2e1d6805da6f9c9b3a4358076ff2e072d828ba7fed124edc1b729e210c55/smbus2-0.6.0-py2.py3-none-any.whl", hash = "sha256:03d83d2a9a4afc5ddca0698ccabf101cb3de52bc5aefd7b76778ffb27ff654e0", size = 11849, upload-time = "2025-12-20T09:02:51.219Z" },
+]
+
+[[package]]
+name = "typing-extensions"
+version = "4.15.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466", size = 109391, upload-time = "2025-08-25T13:49:26.313Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548", size = 44614, upload-time = "2025-08-25T13:49:24.86Z" },
 ]

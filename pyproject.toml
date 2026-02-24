@@ -9,6 +9,7 @@ dependencies = [
     "pigpio>=1.78",
     "rich>=14.3.2",
     "smbus2>=0.6.0",
+    "typing-extensions>=4.15.0",
 ]
 
 [dependency-groups]
