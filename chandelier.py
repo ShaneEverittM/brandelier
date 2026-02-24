@@ -1,10 +1,11 @@
+import traceback
+import logging
+import time
 from abc import ABC
 from dataclasses import dataclass
 from enum import IntEnum
-import logging
 from collections.abc import Callable, Mapping
 from math import sin
-import time
 from typing import final, ClassVar
 from typing_extensions import Self, override
 
@@ -79,6 +80,31 @@ class SetBrightness(Command):
         return self._value
 
 
+@final
+class Zero(Command):
+    def __init__(self):
+        super().__init__(0)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.ZERO
+
+
+@final
+class SetMaxExtension(Command):
+    def __init__(self, extension: float, max_extension: int):
+        super().__init__(extension)
+        self._max_extension = max_extension
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_MAX_EXTENSION
+
+    @override
+    def argument(self) -> int:
+        return self._max_extension
+
+
 @dataclass
 class Response:
     extension: float
@@ -105,16 +131,12 @@ class Bulb:
         self.lagging_warning: bool = False
 
     def zero(self):
-        # set position to zero and command zeroing routine
-        data = [0x00, 0x00, 0x09, 0x00]
-        self.device.write(bytes(data))
+        self.write(Zero())
 
     def set_extension(self, extension: float):
         # 16-bits: 1 byte for inches, 1 byte for fractions of an inch
         self.last_requested_extension = extension
-        extension = constrain(int(extension * 256), 0, 0xFFFF)
-        data = extension.to_bytes(2, byteorder="big") + bytes(2)
-        self.device.write(data)
+        self.write(SetExtension(extension))
 
     def write(self, command: Command) -> None:
         data = command.encode()
@@ -140,8 +162,8 @@ class Bulb:
         self.zeroing = response.zeroing
 
         if (
-                abs(self.last_requested_extension - self.real_extension)
-                > self.extension_tolerance
+            abs(self.last_requested_extension - self.real_extension)
+            > self.extension_tolerance
         ):
             if report_drift:
                 raise ExtensionDriftWarning(
@@ -150,7 +172,7 @@ class Bulb:
 
 
 def driver(
-        bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
+    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
 ):
     for bulb in bulbs.values():
         bulb.zero()
@@ -197,6 +219,7 @@ def main():
     except KeyboardInterrupt:
         return
     except Exception as e:
+        traceback.print_exc()
         print(f"An error occurred: {e}")
 
 
