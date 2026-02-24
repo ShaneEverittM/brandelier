@@ -1,17 +1,20 @@
-from typing import Literal
+from typing_extensions import override, Self
 
-from crccheck.crc import Crc8
+from crccheck.crc import Crc8  # pyright: ignore[reportMissingTypeStubs]
 
 
 class Crc(Crc8):
-    def process(self, data: bytes) -> None:
-        super().process(data)
+    @override
+    def process(self, data: bytes) -> Self:
+        return super().process(data)  # pyright: ignore[reportUnknownMemberType]
 
+    @override
     def final(self) -> int:
-        super().final()
+        return super().final()  # pyright: ignore[reportUnknownVariableType]
 
-    def finalbytes(self, byteorder: Literal["big", "little"] = 'big') -> bytes:
-        super().finalbytes(byteorder)
+    @override
+    def finalbytes(self, byteorder: str = "big") -> bytes:
+        return bytes(super().finalbytes(byteorder))  # pyright: ignore[reportUnknownArgumentType]
 
 
 __all__ = ["Crc"]
