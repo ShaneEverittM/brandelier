@@ -19,14 +19,14 @@ class OpCode(IntEnum):
     SET_EXTENSION = 0
     SET_BRIGHTNESS = 1
     SAVE_POSITION = 2
-    SET_MAX_VALUE = 3
-    SET_KP = 4
-    SET_KI = 5
-    SET_KD = 6
-    SET_KP_POS = 7
-    SET_MAX_SPEED = 8
+    SET_MAX_PWM = 3 # un-implemented
+    SET_KP = 4 # not needed yet
+    SET_KI = 5 # not needed yet
+    SET_KD = 6 # not needed yet, probably ever
+    SET_KP_POS = 7 # how quickly the bulb chases its new position
+    SET_MAX_SPEED = 8 # inches per second
     ZERO = 9
-    SET_MAX_EXTENSION = 10
+    SET_MAX_EXTENSION = 10 # inches
 
 
 @final
@@ -77,7 +77,7 @@ class SetBrightness(Command):
 
     @override
     def argument(self) -> int:
-        return self._value
+        return constrain(self._value, 0, 255)
 
 
 @final
@@ -89,9 +89,18 @@ class Zero(Command):
     def opcode(self) -> OpCode:
         return OpCode.ZERO
 
+@final
+class Save(Command):
+    def __init__(self, extension: float):
+        super().__init__(extension)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SAVE_POSITION
 
 @final
 class SetMaxExtension(Command):
+    """Max extension in inches. Whole number only."""
     def __init__(self, extension: float, max_extension: int):
         super().__init__(extension)
         self._max_extension = max_extension
@@ -102,8 +111,37 @@ class SetMaxExtension(Command):
 
     @override
     def argument(self) -> int:
-        return self._max_extension
+        return constrain(self._max_extension, 0, 115) # 115 is maximum length of current design
 
+@final
+class SetMaxSpeed(Command):
+    """Max bulb speed in inches per second. Rounds to one decimal point."""
+    def __init__(self, extension: float, max_speed: float):
+        super().__init__(extension)
+        self._max_speed = int(max_speed * 10)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_MAX_SPEED
+
+    @override
+    def argument(self) -> int:
+        return constrain(self._max_speed, 0, 255)
+
+@final
+class SetKpPos(Command):
+    """Determines how quickly the bulb chases its commanded position. Rounds to one decimal point. Default value is 3.0"""
+    def __init__(self, extension: float, kp_pos: float):
+        super().__init__(extension)
+        self._kp_pos = int(kp_pos * 10)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_KP_POS
+
+    @override
+    def argument(self) -> int:
+        return constrain(self._kp_pos, 0, 255)
 
 @dataclass
 class Response:
@@ -128,7 +166,6 @@ class Bulb:
 
         self.extension_tolerance = extension_tolerance
         self.last_requested_extension: float = 0.0
-        self.lagging_warning: bool = False
 
     def zero(self):
         self.write(Zero())

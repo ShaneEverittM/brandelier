@@ -102,18 +102,18 @@ class Bus:
         log.error("I2C write failed after %d retries", self.retries)
 
     def read(self, address: int, amount: int) -> bytes:
-        r = i2c_msg.read(address, amount + 1)
+        r = i2c_msg.read(address, amount + 2)
         retries = 0
         while retries < self.retries:
             try:
                 self.bus.i2c_rdwr(r)
                 data = bytes(r)
-                checksum = data[-1]
-                data = data[:-1]
+                checksum = data[-2:]
+                data = data[:-2]
                 crc = Crc()
                 crc.process(address.to_bytes())
                 crc.process(data)
-                if crc.final() != checksum:
+                if crc.finalbytes() != checksum:
                     raise I2CReadError(address)
                 return data
             except OSError:
@@ -154,4 +154,4 @@ class I2CDevice:
 def get_all() -> Mapping[Position, I2CDevice]:
     """Return a mapping of all present I2C devices and their positions."""
     bus = Bus(BUS)
-    return {Position(i * 4, 0): I2CDevice(bus, BASE_ADDRESS + i) for i in range(NUM_DEVICES)}
+    return {Position(i * 4, 0): I2CDevice(bus, BASE_ADDRESS + i) for i in range(1)}#NUM_DEVICES)}

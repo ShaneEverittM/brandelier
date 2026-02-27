@@ -1,9 +1,9 @@
 from typing_extensions import override, Self
 
-from crccheck.crc import Crc8  # pyright: ignore[reportMissingTypeStubs]
+from crccheck.crc import Crc16  # pyright: ignore[reportMissingTypeStubs]
 
 
-class Crc(Crc8):
+class Crc(Crc16):
     @override
     def process(self, data: bytes) -> Self:
         return super().process(data)  # pyright: ignore[reportUnknownMemberType]
