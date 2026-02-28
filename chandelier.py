@@ -43,7 +43,7 @@ def constrain(val: int, small: int, large: int) -> int:
 
 class Command(ABC):
     def __init__(self, extension: float):
-        self._extension: int = constrain(int(extension * 256), 0, 0xFFFF)
+        self.extension: float = extension
 
     def opcode(self) -> OpCode:
         return OpCode.SET_EXTENSION
@@ -53,7 +53,7 @@ class Command(ABC):
 
     @final
     def encode(self) -> bytes:
-        [lsb, msb] = self._extension.to_bytes(2, byteorder="big")
+        [lsb, msb] = constrain(int(self.extension * 256), 0, 0xFFFF).to_bytes(2, byteorder="big")
         opcode = self.opcode()
         argument = self.argument()
         data = bytes([lsb, msb, opcode, argument])
@@ -67,6 +67,7 @@ class SetExtension(Command):
 
 @final
 class SetBrightness(Command):
+    """Sets the brightness of the bulb. Individual value changes below 20 are noticable."""
     def __init__(self, extension: float, value: int):
         super().__init__(extension)
         self._value = value
@@ -91,6 +92,7 @@ class Zero(Command):
 
 @final
 class Save(Command):
+    """Saves the bulb's position internally so each microcontroller knows where it left off. Primarily used before shutdown."""
     def __init__(self, extension: float):
         super().__init__(extension)
 
@@ -170,12 +172,8 @@ class Bulb:
     def zero(self):
         self.write(Zero())
 
-    def set_extension(self, extension: float):
-        # 16-bits: 1 byte for inches, 1 byte for fractions of an inch
-        self.last_requested_extension = extension
-        self.write(SetExtension(extension))
-
     def write(self, command: Command) -> None:
+        self.last_requested_extension = command.extension
         data = command.encode()
         self.device.write(data)
 
@@ -209,13 +207,14 @@ class Bulb:
 
 
 def driver(
-    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
+    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float], brightnesses: Callable[[float, float, float], int]
 ):
     for bulb in bulbs.values():
+        bulb.write(SetMaxExtension(0, 65)) #65 inches is currently the length I have available for testing
         bulb.zero()
         bulb.refresh()
 
-    timeout = 10.0
+    timeout = 60.0
     elapsed = 0.0
     while any(bulb.zeroing for bulb in bulbs.values()):
         for bulb in bulbs.values():
@@ -232,7 +231,8 @@ def driver(
         t = time.monotonic()
         for position, bulb in bulbs.items():
             extension = extensions(position.x, position.y, t)
-            bulb.set_extension(extension)
+            brightness = brightnesses(position.x, position.y, t)
+            bulb.write(SetBrightness(extension, brightness))
 
         if t - last_check > 1:
             for position, bulb in bulbs.items():
@@ -252,7 +252,7 @@ def driver(
 def main():
     try:
         bulbs = {position: Bulb(device) for position, device in i2c.get_all().items()}
-        driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.25 * t) + 3.1)
+        driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.025 * t) + 4, lambda x, _, t: int(48 * sin(0.25 * x + 0.25 * t) + 64))
     except KeyboardInterrupt:
         return
     except Exception as e:

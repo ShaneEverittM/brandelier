@@ -154,4 +154,4 @@ class I2CDevice:
 def get_all() -> Mapping[Position, I2CDevice]:
     """Return a mapping of all present I2C devices and their positions."""
     bus = Bus(BUS)
-    return {Position(i * 4, 0): I2CDevice(bus, BASE_ADDRESS + i) for i in range(1)}#NUM_DEVICES)}
+    return {Position(i * 4, 0): I2CDevice(bus, BASE_ADDRESS + i) for i in range(NUM_DEVICES)}
