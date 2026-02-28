@@ -1,26 +1,32 @@
+import traceback
 import logging
+import time
+from abc import ABC
+from dataclasses import dataclass
+from enum import IntEnum
 from collections.abc import Callable, Mapping
 from math import sin
-import time
-from typing import final
+from typing import final, ClassVar
+from typing_extensions import Self, override
 
 import i2c
-from i2c import I2CDevice, Position
+from i2c import I2CDevice, Position, I2CReadRetryError
 
 log = logging.getLogger(__name__)
 
-special_dict = {
-    "p": 0,  # position
-    "b": 1,  # brightness
-    "s": 2,  # save position
-    "m": 3,  # max analogWrite value (max speed out of 255)
-    "k": 4,  # kp
-    "i": 5,  # ki
-    "d": 6,  # kd
-    "o": 7,  # kp_pos (ramp rate when close)
-    "x": 8,  # max speed (in/s divide by 10)
-    "z": 9,  # command zero
-}
+
+class OpCode(IntEnum):
+    SET_EXTENSION = 0
+    SET_BRIGHTNESS = 1
+    SAVE_POSITION = 2
+    SET_MAX_PWM = 3 # un-implemented
+    SET_KP = 4 # not needed yet
+    SET_KI = 5 # not needed yet
+    SET_KD = 6 # not needed yet, probably ever
+    SET_KP_POS = 7 # how quickly the bulb chases its new position
+    SET_MAX_SPEED = 8 # inches per second
+    ZERO = 9
+    SET_MAX_EXTENSION = 10 # inches
 
 
 @final
@@ -35,6 +41,123 @@ def constrain(val: int, small: int, large: int) -> int:
     return min(max(val, small), large)
 
 
+class Command(ABC):
+    def __init__(self, extension: float):
+        self.extension: float = extension
+
+    def opcode(self) -> OpCode:
+        return OpCode.SET_EXTENSION
+
+    def argument(self) -> int:
+        return 0x00
+
+    @final
+    def encode(self) -> bytes:
+        [lsb, msb] = constrain(int(self.extension * 256), 0, 0xFFFF).to_bytes(2, byteorder="big")
+        opcode = self.opcode()
+        argument = self.argument()
+        data = bytes([lsb, msb, opcode, argument])
+        return data
+
+
+@final
+class SetExtension(Command):
+    pass
+
+
+@final
+class SetBrightness(Command):
+    """Sets the brightness of the bulb. Individual value changes below 20 are noticable."""
+    def __init__(self, extension: float, value: int):
+        super().__init__(extension)
+        self._value = value
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_BRIGHTNESS
+
+    @override
+    def argument(self) -> int:
+        return constrain(self._value, 0, 255)
+
+
+@final
+class Zero(Command):
+    def __init__(self):
+        super().__init__(0)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.ZERO
+
+@final
+class Save(Command):
+    """Saves the bulb's position internally so each microcontroller knows where it left off. Primarily used before shutdown."""
+    def __init__(self, extension: float):
+        super().__init__(extension)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SAVE_POSITION
+
+@final
+class SetMaxExtension(Command):
+    """Max extension in inches. Whole number only."""
+    def __init__(self, extension: float, max_extension: int):
+        super().__init__(extension)
+        self._max_extension = max_extension
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_MAX_EXTENSION
+
+    @override
+    def argument(self) -> int:
+        return constrain(self._max_extension, 0, 115) # 115 is maximum length of current design
+
+@final
+class SetMaxSpeed(Command):
+    """Max bulb speed in inches per second. Rounds to one decimal point."""
+    def __init__(self, extension: float, max_speed: float):
+        super().__init__(extension)
+        self._max_speed = int(max_speed * 10)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_MAX_SPEED
+
+    @override
+    def argument(self) -> int:
+        return constrain(self._max_speed, 0, 255)
+
+@final
+class SetKpPos(Command):
+    """Determines how quickly the bulb chases its commanded position. Rounds to one decimal point. Default value is 3.0"""
+    def __init__(self, extension: float, kp_pos: float):
+        super().__init__(extension)
+        self._kp_pos = int(kp_pos * 10)
+
+    @override
+    def opcode(self) -> OpCode:
+        return OpCode.SET_KP_POS
+
+    @override
+    def argument(self) -> int:
+        return constrain(self._kp_pos, 0, 255)
+
+@dataclass
+class Response:
+    extension: float
+    light: bool
+    zeroing: bool
+
+    LENGTH: ClassVar[int] = 4
+
+    @classmethod
+    def parse(cls, data: bytes) -> Self:
+        return cls(data[0] + data[1] / 256, bool(data[2]), bool(data[3]))
+
+
 @final
 class Bulb:
     def __init__(self, device: I2CDevice, extension_tolerance: float = 1.0):
@@ -45,30 +168,33 @@ class Bulb:
 
         self.extension_tolerance = extension_tolerance
         self.last_requested_extension: float = 0.0
-        self.lagging_warning: bool = False
 
     def zero(self):
-        # set position to zero and command zeroing routine
-        data = [0x00, 0x00, 0x09, 0x00]
-        self.device.write(bytes(data))
+        self.write(Zero())
 
-    def set_extension(self, extension: float):
-        # 16-bits: 1 byte for inches, 1 byte for fractions of an inch
-        self.last_requested_extension = extension
-        extension = constrain(int(extension * 256), 0, 0xFFFF)
-        data = extension.to_bytes(2, byteorder="big") + bytes(2)
+    def write(self, command: Command) -> None:
+        self.last_requested_extension = command.extension
+        data = command.encode()
         self.device.write(data)
+
+    def read(self) -> Response:
+        data = self.device.read(amount=Response.LENGTH)
+        return Response.parse(data)
+
+    def transfer(self, command: Command) -> Response:
+        self.write(command)
+        return self.read()
 
     def refresh(self, report_drift: bool = False):
         try:
-            real_extension, light_on, zeroing = self.read_data()
-        except ValueError as e:
+            response = self.read()
+        except I2CReadRetryError as e:
             log.warning(e)
             return
 
-        self.real_extension = real_extension
-        self.light_on = light_on
-        self.zeroing = zeroing
+        self.real_extension = response.extension
+        self.light_on = response.light
+        self.zeroing = response.zeroing
 
         if (
             abs(self.last_requested_extension - self.real_extension)
@@ -79,21 +205,16 @@ class Bulb:
                     expected=self.last_requested_extension, actual=self.real_extension
                 )
 
-    def read_data(self) -> tuple[float, bool, bool]:
-        data = self.device.read(amount=4)
-        if data[2] > 1 or data[3] > 1:
-            raise ValueError("Invalid I2C data")
-        return data[0] + data[1] / 256, bool(data[2]), bool(data[3])
-
 
 def driver(
-    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float]
+    bulbs: Mapping[Position, Bulb], extensions: Callable[[float, float, float], float], brightnesses: Callable[[float, float, float], int]
 ):
     for bulb in bulbs.values():
+        bulb.write(SetMaxExtension(0, 65)) #65 inches is currently the length I have available for testing
         bulb.zero()
         bulb.refresh()
 
-    timeout = 10.0
+    timeout = 60.0
     elapsed = 0.0
     while any(bulb.zeroing for bulb in bulbs.values()):
         for bulb in bulbs.values():
@@ -110,7 +231,8 @@ def driver(
         t = time.monotonic()
         for position, bulb in bulbs.items():
             extension = extensions(position.x, position.y, t)
-            bulb.set_extension(extension)
+            brightness = brightnesses(position.x, position.y, t)
+            bulb.write(SetBrightness(extension, brightness))
 
         if t - last_check > 1:
             for position, bulb in bulbs.items():
@@ -130,10 +252,11 @@ def driver(
 def main():
     try:
         bulbs = {position: Bulb(device) for position, device in i2c.get_all().items()}
-        driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.25 * t) + 3.1)
+        driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.25 * t) + 4, lambda x, _, t: int(16 * sin(0.25 * x + 0.25 * t) + 20))
     except KeyboardInterrupt:
         return
     except Exception as e:
+        traceback.print_exc()
         print(f"An error occurred: {e}")
 
 

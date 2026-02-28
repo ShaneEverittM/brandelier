@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from rich.logging import RichHandler
 
+from crc import Crc
+
 LEVEL = os.getenv("LOGLEVEL", "INFO").upper()
 FORMAT = "%(message)s"
 logging.basicConfig(
@@ -73,13 +75,17 @@ class Bus:
         self.retries = retries
 
     def write(self, address: int, data: bytes):
+        crc = Crc()
+        crc.process(address.to_bytes())
+        crc.process(data)
+        checksum = crc.finalbytes()
         log.debug(
             "Writing to I2C device at address %d with data %s",
             address,
-            [hex(byte) for byte in data]
+            [hex(byte) for byte in data] + [hex(checksum[0])]
         )
 
-        w = i2c_msg.write(address, data)
+        w = i2c_msg.write(address, data + checksum)
         retries = 0
         while retries < self.retries:
             try:
@@ -96,16 +102,30 @@ class Bus:
         log.error("I2C write failed after %d retries", self.retries)
 
     def read(self, address: int, amount: int) -> bytes:
-        r = i2c_msg.read(address, amount)
+        r = i2c_msg.read(address, amount + 2)
         retries = 0
         while retries < self.retries:
             try:
                 self.bus.i2c_rdwr(r)
-                return bytes(r)
+                data = bytes(r)
+                checksum = data[-2:]
+                data = data[:-2]
+                crc = Crc()
+                crc.process(address.to_bytes())
+                crc.process(data)
+                if crc.finalbytes() != checksum:
+                    raise I2CReadError(address)
+                return data
             except OSError:
                 time.sleep(self.delay * (retries + 1))
                 if retries > 1:
                     log.warning("I2C read failed after %d retries, retrying...", retries)
+                retries += 1
+                continue
+            except I2CReadError:
+                time.sleep(self.delay * (retries + 1))
+                if retries > 1:
+                    log.warning("I2C read bad data after %d retries, retrying...", retries)
                 retries += 1
                 continue
 
