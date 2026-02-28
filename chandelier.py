@@ -252,7 +252,7 @@ def driver(
 def main():
     try:
         bulbs = {position: Bulb(device) for position, device in i2c.get_all().items()}
-        driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.025 * t) + 4, lambda x, _, t: int(48 * sin(0.25 * x + 0.25 * t) + 64))
+        driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.25 * t) + 4, lambda x, _, t: int(16 * sin(0.25 * x + 0.25 * t) + 20))
     except KeyboardInterrupt:
         return
     except Exception as e:
