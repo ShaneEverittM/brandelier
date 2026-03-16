@@ -1,5 +1,3 @@
-from html import escape
-
 from flask import Flask, render_template, request
 
 import chandelier
@@ -18,6 +16,13 @@ def button_action():
             chandelier.main()
             return "<p>Congrats, the chandelier should have started</p>"
         case "stop":
-            return "<h1>Things have been set into motion that can't be stopped</h1>"
+            # tbd
+            return "<h1>Chandelier should stop moving</h1>"
+        case "set":
+            # tbd
+            return "<h1>Chandelier should move to the input positions</h1>"
+        case "cycle":
+            # tbd
+            return "<h1>Each bulb should cycle through all positons in sequence</h1>"
         case _:
             return f"<p>Somehow you clicked a button that doesn't match the expected values: {button_val}</p>"

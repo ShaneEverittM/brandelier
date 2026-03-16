@@ -1,6 +1,73 @@
-<h1>Brandelier</h1>
-<p>I don't know man, none of these buttons do anything yet</p>
-<form action="/button-action" method="POST">
-    <button type="submit" name="btn" value="start">Start it up</button>
-    <button type="submit" name="btn" value="stop">Shut it down</button>
-</form>
+<head>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+
+<body>
+    <h1>Brandelier</h1>
+    <p>Only 'Start' works right now</p>
+    <div class="box">
+        <form action="/button-action" method="POST">
+            <button type="submit" name="btn" value="start">Start it up</button>
+            <button type="submit" name="btn" value="set">Set bulb positions</button>
+            <button type="submit" name="btn" value="cycle">Cycle through bulb positions</button>
+            <button type="submit" name="btn" value="stop">Shut it down</button>
+        </form>
+    </div>
+
+    <div class="box">
+        <div class="rotated-wrapper">
+            <p>Value: <span id="output0"></span></p>
+            <input type="range" min="0" max="30" value="1" step="0.01" class="slider" id="device0">
+        </div>
+        <div class="rotated-wrapper">
+            <p>Value: <span id="output1"></span></p>
+            <input type="range" min="0" max="30" value="1" step="0.01" class="slider" id="device1">
+        </div>
+        <div class="rotated-wrapper">
+            <p>Value: <span id="output2"></span></p>
+            <input type="range" min="0" max="30" value="1" step="0.01" class="slider" id="device2">
+        </div>
+        <div class="rotated-wrapper">
+            <p>Value: <span id="output3"></span></p>
+            <input type="range" min="0" max="30" value="1" step="0.01" class="slider" id="device3">
+        </div>
+        <div class="rotated-wrapper">
+            <p>Value: <span id="output4"></span></p>
+            <input type="range" min="0" max="30" value="1" step="0.01" class="slider" id="device4">
+        </div>
+    </div>
+
+    <script>
+        var device0 = document.getElementById("device0");
+        var output0 = document.getElementById("output0");
+        var device1 = document.getElementById("device1");
+        var output1 = document.getElementById("output1");
+        var device2 = document.getElementById("device2");
+        var output2 = document.getElementById("output2");
+        var device3 = document.getElementById("device3");
+        var output3 = document.getElementById("output3");
+        var device4 = document.getElementById("device4");
+        var output4 = document.getElementById("output4");
+        output0.innerHTML = device0.valueAsNumber.toFixed(2);
+        output1.innerHTML = device1.valueAsNumber.toFixed(2);
+        output2.innerHTML = device2.valueAsNumber.toFixed(2);
+        output3.innerHTML = device3.valueAsNumber.toFixed(2);
+        output4.innerHTML = device4.valueAsNumber.toFixed(2);
+
+        device0.oninput = function () {
+            output0.innerHTML = this.valueAsNumber.toFixed(2);
+        }
+        device1.oninput = function () {
+            output1.innerHTML = this.valueAsNumber.toFixed(2);
+        }
+        device2.oninput = function () {
+            output2.innerHTML = this.valueAsNumber.toFixed(2);
+        }
+        device3.oninput = function () {
+            output3.innerHTML = this.valueAsNumber.toFixed(2);
+        }
+        device4.oninput = function () {
+            output4.innerHTML = this.valueAsNumber.toFixed(2);
+        }
+    </script>
+</body>
