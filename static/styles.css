@@ -37,14 +37,15 @@ p {
     border-radius: 14px;
     border: 2px solid rgb(20 20 20);
 }
-
 .slider::-moz-range-thumb {
     width: 100px;
     height: 100px;
-    background: #d6d1c6;
     cursor: pointer;
     border-radius: 100%;
     border: 2px solid rgb(20 20 20);
+    background-image: url("/static/blider.PNG");
+    background-size: contain;
+    background-repeat: no-repeat;
 }
 
 .slider::-moz-range-progress {
