@@ -259,6 +259,23 @@ def main():
         traceback.print_exc()
         print(f"An error occurred: {e}")
 
+class ChandelierServer:
+    def __init__(self):
+        self.keep_running = False
+
+    def start_chandelier(self):
+        self.keep_running = True
+        while self.keep_running:
+            try:
+                bulbs = {position: Bulb(device) for position, device in i2c.get_all().items()}
+                driver(bulbs, lambda x, _, t: 3 * sin(0.25 * x + 0.25 * t) + 4, lambda x, _, t: int(16 * sin(0.25 * x + 0.25 * t) + 20))
+            except Exception as e:
+                traceback.print_exc()
+                print(f"An error occurred: {e}")
+
+    def stop_chandelier(self):
+        logging.info("stopping operation")
+        self.keep_running = False
 
 if __name__ == "__main__":
     import logging
