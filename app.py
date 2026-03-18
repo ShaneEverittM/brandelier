@@ -1,10 +1,9 @@
 from flask import Flask, render_template, request
-import asyncio
+
 import chandelier
 
 app = Flask(__name__)
 chandelier_server = chandelier.ChandelierServer()
-loop = asyncio.new_event_loop()
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -14,10 +13,10 @@ def button_action():
     button_val = request.form.get('btn')
     match button_val:
         case "start":
-            loop.create_task(chandelier_server.start_chandelier())
+            chandelier_server.start_chandelier()
             return "<p>Congrats, the chandelier should have started</p>"
         case "stop":
-            loop.create_task(chandelier_server.stop_chandelier())
+            chandelier_server.stop_chandelier()
             return "<h1>Chandelier should stop moving</h1>"
         case "set":
             # tbd

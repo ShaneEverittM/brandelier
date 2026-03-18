@@ -1,4 +1,3 @@
-import threading
 import traceback
 import logging
 import time
@@ -264,7 +263,7 @@ class ChandelierServer:
     def __init__(self):
         self.keep_running = False
 
-    async def start_chandelier(self):
+    def start_chandelier(self):
         self.keep_running = True
         while self.keep_running:
             try:
@@ -274,7 +273,7 @@ class ChandelierServer:
                 traceback.print_exc()
                 print(f"An error occurred: {e}")
 
-    async def stop_chandelier(self):
+    def stop_chandelier(self):
         logging.info("stopping operation")
         self.keep_running = False
 
