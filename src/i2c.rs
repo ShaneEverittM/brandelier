@@ -73,6 +73,21 @@ impl Bus {
 
         Ok(())
     }
+
+    fn write(bus: &mut LinuxI2CBus, address: u16, data: Bytes) -> Result<()> {
+        let mut data = BytesMut::from(data);
+
+        let mut digest = CRC.digest();
+        digest.update(&address.to_be_bytes());
+        digest.update(&data);
+        let checksum = digest.finalize();
+        data.put_u16(checksum);
+
+        let message = LinuxI2CMessage::write(&*data).with_address(address);
+        bus.transfer(&mut [message])?;
+
+        Ok(())
+    }
 }
 
 impl Message<Read> for Bus {
@@ -100,16 +115,10 @@ impl Message<Write> for Bus {
     type Reply = Result<()>;
 
     async fn handle(&mut self, msg: Write, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
-        let mut data = BytesMut::from(msg.data);
-
-        let mut digest = CRC.digest();
-        digest.update(&msg.address.to_be_bytes());
-        digest.update(&data);
-        let checksum = digest.finalize();
-        data.put_u16(checksum);
-
-        let message = LinuxI2CMessage::write(&*data).with_address(msg.address);
-        self.bus.transfer(&mut [message])?;
+        retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
+            Bus::write(&mut self.bus, msg.address, msg.data.clone())
+        })
+        .map_err(Box::new)?;
 
         Ok(())
     }
