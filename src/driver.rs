@@ -46,20 +46,15 @@ impl Driver {
                 max: 65.0,
             })
             .await?;
-            tokio::time::sleep(Duration::from_millis(100)).await;
             bulb.zero().await?;
-            tokio::time::sleep(Duration::from_millis(100)).await;
             bulb.refresh(false).await?;
             info!(zeroing = bulb.zeroing(), "Bulb post refresh");
-
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         let zero = async {
             while self.bulbs.values().map(Bulb::zeroing).any(identity) {
                 for bulb in self.bulbs.values_mut() {
                     bulb.refresh(false).await?;
-                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
             info!("Finished zeroing!");
@@ -103,8 +98,6 @@ impl Driver {
                 }
                 last_check = Some(now);
             }
-
-            tokio::time::sleep(Duration::from_millis(40)).await;
         }
     }
 }

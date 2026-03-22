@@ -4,7 +4,7 @@ use bytes::Bytes;
 use kameo::actor::ActorRef;
 use kameo::error::SendError;
 use std::ops::Sub;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, warn};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
