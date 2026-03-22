@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
             amount: 6,
         })
         .await?;
-    println!("Read {} bytes, got: ", data.len());
+    println!("Read {} bytes, got: {:?}", data.len(), data);
 
     Ok(())
 }

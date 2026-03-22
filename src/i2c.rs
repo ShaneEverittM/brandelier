@@ -1,13 +1,17 @@
-use std::path::Path;
-
 use bytes::{BufMut, Bytes, BytesMut};
 use crc::{CRC_16_XMODEM, Crc};
 use i2cdev::core::*;
 use i2cdev::linux::{LinuxI2CBus, LinuxI2CError, LinuxI2CMessage};
 use kameo::prelude::*;
+use retry::delay::Fixed;
+use retry::retry;
+use std::path::Path;
+use std::time::Duration;
 
 const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const TELEMETRY_SIZE: usize = 4;
+const RETRIES: usize = 3;
+const RETRY_DELAY: Duration = Duration::from_millis(20);
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -21,6 +25,9 @@ pub enum Error {
 
     #[error("Not enough bytes in telemetry read")]
     Eof,
+
+    #[error("IO operation failed after retries")]
+    Retry(#[from] Box<retry::Error<Self>>),
 }
 
 #[derive(Actor)]
@@ -48,28 +55,39 @@ pub struct Read {
     pub amount: usize,
 }
 
-impl Message<Read> for Bus {
-    type Reply = Result<Bytes>;
-
-    async fn handle(&mut self, msg: Read, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
-        self.read_buf.resize(msg.amount, 0);
-
-        let message = LinuxI2CMessage::read(&mut *self.read_buf).with_address(msg.address);
-        self.bus.transfer(&mut [message])?;
-        let data = self.read_buf.split().freeze();
+impl Bus {
+    fn read(bus: &mut LinuxI2CBus, address: u16, buffer: &mut [u8]) -> Result<()> {
+        let message = LinuxI2CMessage::read(buffer).with_address(address);
+        bus.transfer(&mut [message])?;
 
         let mut digest = CRC.digest();
-        digest.update(&msg.address.to_be_bytes());
-        digest.update(&data[..TELEMETRY_SIZE]);
+        digest.update(&address.to_be_bytes());
+        digest.update(&buffer[..TELEMETRY_SIZE]);
         let expected = u16::from_be_bytes(
-            <[u8; 2]>::try_from(&data[TELEMETRY_SIZE..]).map_err(|_| Error::Eof)?,
+            <[u8; 2]>::try_from(&buffer[TELEMETRY_SIZE..]).map_err(|_| Error::Eof)?,
         );
         let actual = digest.finalize();
         if expected != actual {
             return Err(Error::Crc { expected, actual });
         }
 
-        Ok(data)
+        Ok(())
+    }
+}
+
+impl Message<Read> for Bus {
+    type Reply = Result<Bytes>;
+
+    async fn handle(&mut self, msg: Read, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
+        self.read_buf.clear();
+        self.read_buf.resize(msg.amount, 0);
+
+        retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
+            Bus::read(&mut self.bus, msg.address, &mut *self.read_buf)
+        })
+        .map_err(Box::new)?;
+
+        Ok(self.read_buf.split().freeze())
     }
 }
 
