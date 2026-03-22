@@ -1,8 +1,10 @@
+mod bulb;
+mod driver;
 mod i2c;
 
-use bytes::Bytes;
-use i2c::Bus;
-use kameo::prelude::*;
+use crate::bulb::Bulb;
+use crate::driver::Driver;
+use tracing_subscriber::EnvFilter;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -12,29 +14,28 @@ pub enum Error {
     I2C(#[from] i2c::Error),
 
     #[error(transparent)]
-    SendRead(#[from] SendError<i2c::Read, i2c::Error>),
-
-    #[error(transparent)]
-    SendWrite(#[from] SendError<i2c::Write, i2c::Error>),
+    Driver(#[from] driver::Error),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let bus = Bus::spawn_in_thread(Bus::new("/dev/i2c-1")?);
-    let data = bus
-        .ask(i2c::Read {
-            address: 0x08,
-            amount: 6,
-        })
-        .await?;
+    tracing_subscriber::fmt::fmt()
+        .pretty()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
-    println!("Read {} bytes, got: {:?}", data.len(), data);
+    let bus = i2c::get_bus()?;
+    let bulbs = i2c::get_addresses()?
+        .map(|(pos, addr)| (pos, Bulb::new(bus.clone(), addr, 1.0)))
+        .collect();
 
-    bus.ask(i2c::Write {
-        address: 0x0C,
-        data: Bytes::from_static(&[0x00, 0x00, 0x09, 0x00]),
-    })
-    .await?;
+    let mut driver = Driver::new(
+        bulbs,
+        |x, _, t| (3.0 * (0.25 * x + 0.25 * t).sin()) + 4.0,
+        |x, _, t| (16.0 * (0.25 * x + 0.25 * t).sin()) + 20.0,
+    );
+    driver.zero().await?;
+    driver.cycle().await?;
 
     Ok(())
 }

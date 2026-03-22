@@ -3,15 +3,19 @@ use crc::{CRC_16_XMODEM, Crc};
 use i2cdev::core::*;
 use i2cdev::linux::{LinuxI2CBus, LinuxI2CError, LinuxI2CMessage};
 use kameo::prelude::*;
+use ordered_float::OrderedFloat;
 use retry::delay::Fixed;
 use retry::retry;
 use std::path::Path;
 use std::time::Duration;
+use tracing::{debug, warn};
 
 const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const TELEMETRY_SIZE: usize = 4;
 const RETRIES: usize = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(20);
+const BASE_ADDRESS: u16 = 0x08;
+const NUM_DEVICES: u16 = 5;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -59,6 +63,7 @@ impl Bus {
     fn read(bus: &mut LinuxI2CBus, address: u16, buffer: &mut [u8]) -> Result<()> {
         let message = LinuxI2CMessage::read(buffer).with_address(address);
         bus.transfer(&mut [message])?;
+        dbg!(&buffer);
 
         let mut digest = CRC.digest();
         digest.update(&address.to_be_bytes());
@@ -95,14 +100,17 @@ impl Message<Read> for Bus {
 
     async fn handle(&mut self, msg: Read, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
         self.read_buf.clear();
-        self.read_buf.resize(msg.amount, 0);
+        let size_with_crc = msg.amount + (CRC.algorithm.width / 8) as usize;
+        debug!(size = size_with_crc, "Creating read buffer");
+        self.read_buf.resize(size_with_crc, 0xff);
 
         retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
             Bus::read(&mut self.bus, msg.address, &mut *self.read_buf)
+                .inspect_err(|e| warn!(?e, "I2c"))
         })
         .map_err(Box::new)?;
 
-        Ok(self.read_buf.split().freeze())
+        Ok(self.read_buf.split_to(msg.amount).freeze())
     }
 }
 
@@ -117,9 +125,35 @@ impl Message<Write> for Bus {
     async fn handle(&mut self, msg: Write, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
         retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
             Bus::write(&mut self.bus, msg.address, msg.data.clone())
+                .inspect_err(|e| warn!(?e, "I2c"))
         })
         .map_err(Box::new)?;
 
         Ok(())
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Position {
+    pub x: OrderedFloat<f64>,
+    pub y: OrderedFloat<f64>,
+}
+
+pub fn get_bus() -> Result<ActorRef<Bus>> {
+    let bus = Bus::spawn(Bus::new("/dev/i2c-1")?);
+    Ok(bus)
+}
+
+pub fn get_addresses() -> Result<impl Iterator<Item = (Position, u16)>> {
+    let mapping = (0..NUM_DEVICES).into_iter().map(|i| {
+        (
+            Position {
+                x: OrderedFloat(i as f64 * 4.0),
+                y: OrderedFloat(0.0),
+            },
+            BASE_ADDRESS + i,
+        )
+    });
+
+    Ok(mapping)
 }
