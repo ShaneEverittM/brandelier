@@ -1,5 +1,6 @@
 mod i2c;
 
+use bytes::Bytes;
 use i2c::Bus;
 use kameo::prelude::*;
 
@@ -11,7 +12,10 @@ pub enum Error {
     I2C(#[from] i2c::Error),
 
     #[error(transparent)]
-    Send(#[from] SendError<i2c::Read, i2c::Error>),
+    SendRead(#[from] SendError<i2c::Read, i2c::Error>),
+
+    #[error(transparent)]
+    SendWrite(#[from] SendError<i2c::Write, i2c::Error>),
 }
 
 #[tokio::main]
@@ -23,7 +27,14 @@ async fn main() -> Result<()> {
             amount: 6,
         })
         .await?;
+
     println!("Read {} bytes, got: {:?}", data.len(), data);
+
+    bus.ask(i2c::Write {
+        address: 0x0C,
+        data: Bytes::from_static(&[0x00, 0x00, 0x09, 0x00]),
+    })
+    .await?;
 
     Ok(())
 }

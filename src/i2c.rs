@@ -107,8 +107,8 @@ impl Message<Read> for Bus {
 }
 
 pub struct Write {
-    address: u16,
-    data: Bytes,
+    pub address: u16,
+    pub data: Bytes,
 }
 
 impl Message<Write> for Bus {
