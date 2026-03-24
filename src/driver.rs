@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::identity;
 use std::mem::replace;
 use std::time::Duration;
 
@@ -32,7 +31,7 @@ pub enum Error {
     ZeroTimeout,
 
     #[error("Background task panicked")]
-    TaskJoinError(#[from] task::JoinError),
+    TaskJoin(#[from] task::JoinError),
 
     #[error(transparent)]
     I2C(#[from] i2c::Error),
@@ -96,7 +95,7 @@ impl State {
         }
 
         let zero = async {
-            while self.bulbs.values().map(Bulb::zeroing).any(identity) {
+            while self.bulbs.values().any(Bulb::zeroing) {
                 for bulb in self.bulbs.values_mut() {
                     bulb.refresh(false).await?;
                 }
@@ -108,7 +107,7 @@ impl State {
         match timeout(Duration::from_secs(60), zero).await {
             Ok(Ok(())) => {}
             Err(_) => return Err(Error::ZeroTimeout),
-            Ok(Err(e)) => return Err(e.into()),
+            Ok(Err(e)) => return Err(e),
         }
 
         Ok(self)

@@ -27,13 +27,35 @@ pub enum Error {
 #[derive(Debug)]
 #[repr(u8)]
 pub enum Command {
-    SetExtension { extension: f64 } = 0x00,
-    SetBrightness { extension: f64, brightness: f64 } = 0x01,
-    SavePosition { extension: f64 } = 0x02,
-    SetKpPos { extension: f64, kp_pos: f64 } = 0x07,
-    SetMaxSpeed { extension: f64, speed: f64 } = 0x08,
-    Zero { extension: f64 } = 0x09,
-    SetMaxExtension { extension: f64, max: f64 } = 0x0A,
+    #[expect(unused)]
+    SetExtension {
+        extension: f64,
+    } = 0x00,
+    SetBrightness {
+        extension: f64,
+        brightness: f64,
+    } = 0x01,
+    #[expect(unused)]
+    SavePosition {
+        extension: f64,
+    } = 0x02,
+    #[expect(unused)]
+    SetKpPos {
+        extension: f64,
+        kp_pos: f64,
+    } = 0x07,
+    #[expect(unused)]
+    SetMaxSpeed {
+        extension: f64,
+        speed: f64,
+    } = 0x08,
+    Zero {
+        extension: f64,
+    } = 0x09,
+    SetMaxExtension {
+        extension: f64,
+        max: f64,
+    } = 0x0A,
 }
 
 impl Command {
@@ -58,7 +80,7 @@ impl Command {
 
     pub fn extension(&self) -> u16 {
         let extension = self.requested_extension();
-        (extension * 256.0).max(0.0).min(65535.0) as u16
+        (extension * 256.0).clamp(0.0, 65535.0) as u16
     }
 
     pub fn argument(&self) -> Option<u8> {
@@ -68,7 +90,7 @@ impl Command {
             SetBrightness { brightness, .. } => Some(*brightness as u8),
             SetKpPos { kp_pos, .. } => Some((*kp_pos * 10.0) as u8),
             SetMaxSpeed { speed, .. } => Some((*speed * 10.0) as u8),
-            SetMaxExtension { max, .. } => Some(max.max(0.0).min(115.0) as u8),
+            SetMaxExtension { max, .. } => Some(max.clamp(0.0, 115.0) as u8),
             _ => None,
         }
     }
@@ -158,7 +180,7 @@ impl Bulb {
             .await?;
 
         debug!(?data, len = data.len(), "Parsing data");
-        let response = Response::parse(&*data)?;
+        let response = Response::parse(&data)?;
         debug!(?response, "Parsed response");
         Ok(response)
     }
@@ -177,19 +199,18 @@ impl Bulb {
         self.light_on = response.light;
         self.zeroing = response.zeroing;
 
-        if report_drift {
-            if self
+        if report_drift
+            && self
                 .last_requested_extension
                 .sub(self.real_extension)
                 .abs()
                 .gt(&self.extension_tolerance)
-            {
-                warn!(
-                    expected = self.last_requested_extension,
-                    actual = self.real_extension,
-                    "Extension drift detected"
-                )
-            }
+        {
+            warn!(
+                expected = self.last_requested_extension,
+                actual = self.real_extension,
+                "Extension drift detected"
+            )
         }
 
         Ok(())

@@ -102,7 +102,7 @@ impl Bus {
         let checksum = digest.finalize();
         data.put_u16(checksum);
 
-        let message = LinuxI2CMessage::write(&*data).with_address(address);
+        let message = LinuxI2CMessage::write(&data).with_address(address);
         bus.transfer(&mut [message])?;
 
         Ok(())
@@ -132,7 +132,7 @@ impl Message<Read> for Bus {
         self.read_buf.resize(size_with_crc, 0xff);
 
         retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
-            Bus::read(&mut self.bus, msg.address, &mut *self.read_buf)
+            Bus::read(&mut self.bus, msg.address, &mut self.read_buf)
                 .inspect_err(|e| warn!(?e, "I2c"))
         })
         .map_err(Box::new)?;
@@ -174,7 +174,7 @@ pub fn get_bus() -> Result<ActorRef<Bus>> {
 }
 
 pub fn get_addresses() -> Result<impl Iterator<Item = (Position, u16)>> {
-    let mapping = (0..NUM_DEVICES).into_iter().map(|i| {
+    let mapping = (0..NUM_DEVICES).map(|i| {
         (
             Position {
                 x: OrderedFloat(i as f64 * 4.0),
