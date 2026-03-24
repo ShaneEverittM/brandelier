@@ -1,17 +1,25 @@
-use bytes::{BufMut, Bytes, BytesMut};
-use crc::{CRC_16_XMODEM, Crc};
-use i2cdev::core::*;
-use i2cdev::linux::{LinuxI2CBus, LinuxI2CError, LinuxI2CMessage};
-use kameo::prelude::*;
-use ordered_float::OrderedFloat;
-use retry::delay::Fixed;
-use retry::retry;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::time::Duration;
-use tokio::time::{Instant, sleep_until};
-use tracing::{debug, warn};
+
+use bytes::BufMut;
+use bytes::Bytes;
+use bytes::BytesMut;
+use crc::CRC_16_XMODEM;
+use crc::Crc;
+use i2cdev::core::*;
+use i2cdev::linux::LinuxI2CBus;
+use i2cdev::linux::LinuxI2CError;
+use i2cdev::linux::LinuxI2CMessage;
+use kameo::prelude::*;
+use ordered_float::OrderedFloat;
+use retry::delay::Fixed;
+use retry::retry;
+use tokio::time::Instant;
+use tokio::time::sleep_until;
+use tracing::debug;
+use tracing::warn;
 
 const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const TELEMETRY_SIZE: usize = 4;

@@ -1,10 +1,14 @@
-use crate::i2c;
-use crate::i2c::Bus;
+use std::ops::Sub;
+
 use bytes::Bytes;
 use kameo::actor::ActorRef;
 use kameo::error::SendError;
-use std::ops::Sub;
-use tracing::{debug, info, warn};
+use tracing::debug;
+use tracing::info;
+use tracing::warn;
+
+use crate::i2c;
+use crate::i2c::Bus;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -153,7 +157,7 @@ impl Bulb {
             })
             .await?;
 
-        debug!(?data, len=data.len(), "Parsing data");
+        debug!(?data, len = data.len(), "Parsing data");
         let response = Response::parse(&*data)?;
         debug!(?response, "Parsed response");
         Ok(response)

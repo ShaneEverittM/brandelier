@@ -2,9 +2,16 @@ mod bulb;
 mod driver;
 mod i2c;
 
-use crate::bulb::Bulb;
-use crate::driver::Driver;
+use std::time::Duration;
+
+use kameo::prelude::*;
+use tokio::time::sleep;
 use tracing_subscriber::EnvFilter;
+
+use crate::driver::Cycle;
+use crate::driver::Driver;
+use crate::driver::Stop;
+use crate::driver::Zero;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -15,6 +22,15 @@ pub enum Error {
 
     #[error(transparent)]
     Driver(#[from] driver::Error),
+
+    #[error(transparent)]
+    StopError(#[from] SendError<Stop, driver::Error>),
+
+    #[error(transparent)]
+    ZeroError(#[from] SendError<Zero, driver::Error>),
+
+    #[error(transparent)]
+    CycleError(#[from] SendError<Cycle, driver::Error>),
 }
 
 #[tokio::main]
@@ -24,18 +40,11 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let bus = i2c::get_bus()?;
-    let bulbs = i2c::get_addresses()?
-        .map(|(pos, addr)| (pos, Bulb::new(bus.clone(), addr, 1.0)))
-        .collect();
-
-    let mut driver = Driver::new(
-        bulbs,
-        |x, _, t| (3.0 * (0.25 * x + 0.25 * t).sin()) + 4.0,
-        |x, _, t| (16.0 * (0.25 * x + 0.25 * t).sin()) + 20.0,
-    );
-    driver.zero().await?;
-    driver.cycle().await?;
+    let driver = Driver::spawn(Driver::new());
+    driver.ask(Zero).await?;
+    driver.ask(Cycle).await?;
+    sleep(Duration::from_secs(30)).await;
+    driver.ask(Stop).await?;
 
     Ok(())
 }
