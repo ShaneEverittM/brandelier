@@ -2,10 +2,14 @@ mod bulb;
 mod driver;
 mod i2c;
 
-use std::time::Duration;
+use std::net::Ipv4Addr;
 
+use axum::Router;
+use axum::extract::State;
+use axum::routing::get;
 use kameo::prelude::*;
-use tokio::time::sleep;
+use tokio::io;
+use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
 use crate::driver::Cycle;
@@ -31,6 +35,18 @@ pub enum Error {
 
     #[error(transparent)]
     CycleError(#[from] SendError<Cycle, driver::Error>),
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+#[derive(Clone)]
+struct AppState {
+    driver: ActorRef<Driver>,
+}
+
+async fn index(State(AppState { driver }): State<AppState>) -> Result<()> {
+    driver.ask(Zero).await?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -41,10 +57,12 @@ async fn main() -> Result<()> {
         .init();
 
     let driver = Driver::spawn(Driver::new());
-    driver.ask(Zero).await?;
-    driver.ask(Cycle).await?;
-    sleep(Duration::from_secs(30)).await;
-    driver.ask(Stop).await?;
+    let state = AppState { driver };
+
+    let router = Router::new().route("/", get(index)).with_state(state);
+    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 5000)).await?;
+
+    axum::serve(listener, router).await?;
 
     Ok(())
 }
