@@ -15,6 +15,7 @@ use crate::driver::Cycle;
 use crate::driver::Driver;
 use crate::driver::Stop;
 use crate::driver::Zero;
+use crate::i2c::Bus;
 
 mod bulb;
 mod driver;
@@ -24,9 +25,6 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error(transparent)]
-    I2C(#[from] i2c::Error),
-
     #[error(transparent)]
     Driver(#[from] driver::Error),
 
@@ -66,7 +64,13 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let driver = Driver::spawn(Driver::new());
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let i2c = i2c::LinuxBus::new("/dev/i2c-1")?;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let i2c = i2c::MockBus::new();
+
+    let bus = Bus::spawn(Bus::new(Box::new(i2c)));
+    let driver = Driver::spawn(Driver::new(bus));
     let state = AppState { driver };
 
     let router = Router::new()

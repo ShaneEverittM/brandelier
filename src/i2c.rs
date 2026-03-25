@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::path::Path;
+use std::io;
 use std::time::Duration;
 
 use bytes::BufMut;
@@ -8,15 +8,6 @@ use bytes::Bytes;
 use bytes::BytesMut;
 use crc::CRC_16_XMODEM;
 use crc::Crc;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use i2cdev::core::*;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use i2cdev::linux::{LinuxI2CBus, LinuxI2CError, LinuxI2CMessage};
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-use i2cdev::core::I2CDevice;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-use i2cdev::mock::MockI2CDevice;
 use kameo::prelude::*;
 use ordered_float::OrderedFloat;
 use retry::delay::Fixed;
@@ -26,33 +17,85 @@ use tokio::time::sleep_until;
 use tracing::debug;
 use tracing::warn;
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-struct MockBus {
-    devices: HashMap<u16, MockI2CDevice>,
+pub trait I2cBus: Send + 'static {
+    fn read(&mut self, address: u16, buffer: &mut [u8]) -> io::Result<()>;
+    fn write(&mut self, address: u16, data: &[u8]) -> io::Result<()>;
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-impl MockBus {
-    fn new() -> Self {
-        Self {
-            devices: HashMap::new(),
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod linux {
+    use std::io;
+    use std::path::Path;
+
+    use i2cdev::core::*;
+    use i2cdev::linux::{LinuxI2CBus, LinuxI2CMessage};
+
+    pub struct LinuxBus(LinuxI2CBus);
+
+    impl LinuxBus {
+        pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+            let bus = LinuxI2CBus::new(path).map_err(io::Error::from)?;
+            Ok(Self(bus))
         }
     }
 
-    fn device(&mut self, address: u16) -> &mut MockI2CDevice {
-        self.devices.entry(address).or_insert_with(MockI2CDevice::new)
+    impl super::I2cBus for LinuxBus {
+        fn read(&mut self, address: u16, buffer: &mut [u8]) -> io::Result<()> {
+            let message = LinuxI2CMessage::read(buffer).with_address(address);
+            self.0.transfer(&mut [message]).map_err(io::Error::from)?;
+            Ok(())
+        }
+
+        fn write(&mut self, address: u16, data: &[u8]) -> io::Result<()> {
+            let message = LinuxI2CMessage::write(data).with_address(address);
+            self.0.transfer(&mut [message]).map_err(io::Error::from)?;
+            Ok(())
+        }
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-type I2CBus = LinuxI2CBus;
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-type I2CBus = MockBus;
+pub use linux::LinuxBus;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-type I2CError = LinuxI2CError;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-type I2CError = std::io::Error;
+mod mock {
+    use std::collections::HashMap;
+    use std::io;
+
+    use i2cdev::core::I2CDevice;
+    use i2cdev::mock::MockI2CDevice;
+
+    pub struct MockBus {
+        devices: HashMap<u16, MockI2CDevice>,
+    }
+
+    impl MockBus {
+        pub fn new() -> Self {
+            Self {
+                devices: HashMap::new(),
+            }
+        }
+    }
+
+    impl super::I2cBus for MockBus {
+        fn read(&mut self, address: u16, buffer: &mut [u8]) -> io::Result<()> {
+            self.devices
+                .entry(address)
+                .or_insert_with(MockI2CDevice::new)
+                .read(buffer)
+        }
+
+        fn write(&mut self, address: u16, data: &[u8]) -> io::Result<()> {
+            self.devices
+                .entry(address)
+                .or_insert_with(MockI2CDevice::new)
+                .write(data)
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub use mock::MockBus;
 
 const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const TELEMETRY_SIZE: usize = 4;
@@ -67,7 +110,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("I2C Operation failed {0}")]
-    I2C(#[from] I2CError),
+    I2C(#[from] io::Error),
 
     #[error("CRC mismatch, expected {expected} got {actual}")]
     Crc { expected: u16, actual: u16 },
@@ -81,50 +124,22 @@ pub enum Error {
 
 #[derive(Actor)]
 pub struct Bus {
-    bus: I2CBus,
+    bus: Box<dyn I2cBus>,
     read_buf: BytesMut,
     last_transfer_to: HashMap<u16, Instant>,
 }
 
 impl Bus {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn new<P>(path: P) -> Result<Self>
-    where
-        P: AsRef<Path>,
-    {
-        let bus = LinuxI2CBus::new(path)?;
-        Ok(Self {
+    pub fn new(bus: Box<dyn I2cBus>) -> Self {
+        Self {
             bus,
             read_buf: BytesMut::new(),
             last_transfer_to: HashMap::new(),
-        })
+        }
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    pub fn new<P>(_path: P) -> Result<Self>
-    where
-        P: AsRef<Path>,
-    {
-        let bus = MockBus::new();
-        Ok(Self {
-            bus,
-            read_buf: BytesMut::new(),
-            last_transfer_to: HashMap::new(),
-        })
-    }
-}
-
-#[derive(Debug)]
-pub struct Read {
-    pub address: u16,
-    pub amount: usize,
-}
-
-impl Bus {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn read(bus: &mut I2CBus, address: u16, buffer: &mut [u8]) -> Result<()> {
-        let message = LinuxI2CMessage::read(buffer).with_address(address);
-        bus.transfer(&mut [message])?;
+    fn read(bus: &mut dyn I2cBus, address: u16, buffer: &mut [u8]) -> Result<()> {
+        bus.read(address, buffer)?;
         dbg!(&buffer);
 
         let mut digest = CRC.digest();
@@ -141,27 +156,7 @@ impl Bus {
         Ok(())
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    fn read(bus: &mut I2CBus, address: u16, buffer: &mut [u8]) -> Result<()> {
-        bus.device(address).read(buffer)?;
-        dbg!(&buffer);
-
-        let mut digest = CRC.digest();
-        digest.update(&address.to_be_bytes());
-        digest.update(&buffer[..TELEMETRY_SIZE]);
-        let expected = u16::from_be_bytes(
-            <[u8; 2]>::try_from(&buffer[TELEMETRY_SIZE..]).map_err(|_| Error::Eof)?,
-        );
-        let actual = digest.finalize();
-        if expected != actual {
-            return Err(Error::Crc { expected, actual });
-        }
-
-        Ok(())
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn write(bus: &mut I2CBus, address: u16, data: Bytes) -> Result<()> {
+    fn write(bus: &mut dyn I2cBus, address: u16, data: Bytes) -> Result<()> {
         let mut data = BytesMut::from(data);
 
         let mut digest = CRC.digest();
@@ -170,23 +165,7 @@ impl Bus {
         let checksum = digest.finalize();
         data.put_u16(checksum);
 
-        let message = LinuxI2CMessage::write(&data).with_address(address);
-        bus.transfer(&mut [message])?;
-
-        Ok(())
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    fn write(bus: &mut I2CBus, address: u16, data: Bytes) -> Result<()> {
-        let mut data = BytesMut::from(data);
-
-        let mut digest = CRC.digest();
-        digest.update(&address.to_be_bytes());
-        digest.update(&data);
-        let checksum = digest.finalize();
-        data.put_u16(checksum);
-
-        bus.device(address).write(&data)?;
+        bus.write(address, &data)?;
 
         Ok(())
     }
@@ -203,6 +182,12 @@ impl Bus {
     }
 }
 
+#[derive(Debug)]
+pub struct Read {
+    pub address: u16,
+    pub amount: usize,
+}
+
 impl Message<Read> for Bus {
     type Reply = Result<Bytes>;
 
@@ -215,7 +200,7 @@ impl Message<Read> for Bus {
         self.read_buf.resize(size_with_crc, 0xff);
 
         retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
-            Bus::read(&mut self.bus, msg.address, &mut self.read_buf)
+            Bus::read(&mut *self.bus, msg.address, &mut self.read_buf)
                 .inspect_err(|e| warn!(?e, "I2c"))
         })
         .map_err(Box::new)?;
@@ -236,7 +221,7 @@ impl Message<Write> for Bus {
         self.rate_limit(msg.address).await;
 
         retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
-            Bus::write(&mut self.bus, msg.address, msg.data.clone())
+            Bus::write(&mut *self.bus, msg.address, msg.data.clone())
                 .inspect_err(|e| warn!(?e, "I2c"))
         })
         .map_err(Box::new)?;
@@ -251,13 +236,8 @@ pub struct Position {
     pub y: OrderedFloat<f64>,
 }
 
-pub fn get_bus() -> Result<ActorRef<Bus>> {
-    let bus = Bus::spawn(Bus::new("/dev/i2c-1")?);
-    Ok(bus)
-}
-
-pub fn get_addresses() -> Result<impl Iterator<Item = (Position, u16)>> {
-    let mapping = (0..NUM_DEVICES).map(|i| {
+pub fn get_addresses() -> impl Iterator<Item = (Position, u16)> {
+    (0..NUM_DEVICES).map(|i| {
         (
             Position {
                 x: OrderedFloat(i as f64 * 4.0),
@@ -265,7 +245,5 @@ pub fn get_addresses() -> Result<impl Iterator<Item = (Position, u16)>> {
             },
             BASE_ADDRESS + i,
         )
-    });
-
-    Ok(mapping)
+    })
 }

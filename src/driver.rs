@@ -35,9 +35,6 @@ pub enum Error {
     #[error("Background task panicked")]
     TaskJoin(#[from] task::JoinError),
 
-    #[error(transparent)]
-    I2C(#[from] i2c::Error),
-
     #[error("Background task failed: {0}")]
     BackgroundTaskFailed(String),
 }
@@ -136,6 +133,7 @@ enum Mode {
 pub struct Driver {
     mode: Mode,
     waiters: Vec<ReplySender<Result<()>>>,
+    bus: ActorRef<i2c::Bus>,
 }
 
 impl Actor for Driver {
@@ -260,20 +258,20 @@ impl Message<WaitForIdle> for Driver {
 }
 
 impl Driver {
-    pub fn new() -> Self {
+    pub fn new(bus: ActorRef<i2c::Bus>) -> Self {
         Self {
             mode: Mode::Uninitialized,
             waiters: Vec::new(),
+            bus,
         }
     }
 
-    fn initialize() -> Result<State> {
-        let bus = i2c::get_bus()?;
-        let bulbs = i2c::get_addresses()?
-            .map(|(pos, addr)| (pos, Bulb::new(bus.clone(), addr, 1.0)))
+    fn initialize(&self) -> State {
+        let bulbs = i2c::get_addresses()
+            .map(|(pos, addr)| (pos, Bulb::new(self.bus.clone(), addr, 1.0)))
             .collect();
 
-        Ok(State { bulbs })
+        State { bulbs }
     }
 
     fn take(&mut self) -> Mode {
@@ -288,7 +286,7 @@ impl Driver {
             Mode::Idle { state } => state,
 
             // Not yet initialized, set ourselves up.
-            Mode::Uninitialized => Self::initialize()?,
+            Mode::Uninitialized => self.initialize(),
 
             // Zeroing, wait for it to complete and reap the state.
             Mode::Zeroing { zeroing } => zeroing.await??,
