@@ -17,6 +17,8 @@ use tokio::time::sleep_until;
 use tracing::debug;
 use tracing::warn;
 
+use crate::config;
+
 pub trait I2cBus: Send + 'static {
     fn read(&mut self, address: u16, buffer: &mut [u8]) -> io::Result<()>;
     fn write(&mut self, address: u16, data: &[u8]) -> io::Result<()>;
@@ -28,7 +30,8 @@ mod linux {
     use std::path::Path;
 
     use i2cdev::core::*;
-    use i2cdev::linux::{LinuxI2CBus, LinuxI2CMessage};
+    use i2cdev::linux::LinuxI2CBus;
+    use i2cdev::linux::LinuxI2CMessage;
 
     pub struct LinuxBus(LinuxI2CBus);
 
@@ -79,17 +82,11 @@ mod mock {
 
     impl super::I2cBus for MockBus {
         fn read(&mut self, address: u16, buffer: &mut [u8]) -> io::Result<()> {
-            self.devices
-                .entry(address)
-                .or_insert_with(MockI2CDevice::new)
-                .read(buffer)
+            self.devices.entry(address).or_default().read(buffer)
         }
 
         fn write(&mut self, address: u16, data: &[u8]) -> io::Result<()> {
-            self.devices
-                .entry(address)
-                .or_insert_with(MockI2CDevice::new)
-                .write(data)
+            self.devices.entry(address).or_default().write(data)
         }
     }
 }
@@ -99,11 +96,6 @@ pub use mock::MockBus;
 
 const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 const TELEMETRY_SIZE: usize = 4;
-const RETRIES: usize = 3;
-const RETRY_DELAY: Duration = Duration::from_millis(20);
-const BASE_ADDRESS: u16 = 0x08;
-const NUM_DEVICES: u16 = 5;
-const DEVICE_RATE_LIMIT: Duration = Duration::from_millis(40);
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -127,14 +119,20 @@ pub struct Bus {
     bus: Box<dyn I2cBus>,
     read_buf: BytesMut,
     last_transfer_to: HashMap<u16, Instant>,
+    retries: usize,
+    retry_delay: Duration,
+    rate_limit: Duration,
 }
 
 impl Bus {
-    pub fn new(bus: Box<dyn I2cBus>) -> Self {
+    pub fn new(bus: Box<dyn I2cBus>, config: &config::I2c) -> Self {
         Self {
             bus,
             read_buf: BytesMut::new(),
             last_transfer_to: HashMap::new(),
+            retries: config.retries,
+            retry_delay: config.retry_delay(),
+            rate_limit: config.rate_limit(),
         }
     }
 
@@ -173,7 +171,7 @@ impl Bus {
     async fn rate_limit(&mut self, address: u16) {
         match self.last_transfer_to.entry(address) {
             Entry::Occupied(entry) => {
-                sleep_until(*entry.get() + DEVICE_RATE_LIMIT).await;
+                sleep_until(*entry.get() + self.rate_limit).await;
             }
             Entry::Vacant(slot) => {
                 slot.insert(Instant::now());
@@ -199,7 +197,7 @@ impl Message<Read> for Bus {
         debug!(size = size_with_crc, "Creating read buffer");
         self.read_buf.resize(size_with_crc, 0xff);
 
-        retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
+        retry(Fixed::from(self.retry_delay).take(self.retries), || {
             Bus::read(&mut *self.bus, msg.address, &mut self.read_buf)
                 .inspect_err(|e| warn!(?e, "I2c"))
         })
@@ -220,7 +218,7 @@ impl Message<Write> for Bus {
     async fn handle(&mut self, msg: Write, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
         self.rate_limit(msg.address).await;
 
-        retry(Fixed::from(RETRY_DELAY).take(RETRIES), || {
+        retry(Fixed::from(self.retry_delay).take(self.retries), || {
             Bus::write(&mut *self.bus, msg.address, msg.data.clone())
                 .inspect_err(|e| warn!(?e, "I2c"))
         })
@@ -236,14 +234,16 @@ pub struct Position {
     pub y: OrderedFloat<f64>,
 }
 
-pub fn get_addresses() -> impl Iterator<Item = (Position, u16)> {
-    (0..NUM_DEVICES).map(|i| {
+pub fn get_addresses(config: &config::I2c) -> impl Iterator<Item = (Position, u16)> {
+    let base = config.base_address;
+    let spacing = config.device_spacing;
+    (0..config.num_devices).map(move |i| {
         (
             Position {
-                x: OrderedFloat(i as f64 * 4.0),
+                x: OrderedFloat(i as f64 * spacing),
                 y: OrderedFloat(0.0),
             },
-            BASE_ADDRESS + i,
+            base + i,
         )
     })
 }

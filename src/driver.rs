@@ -5,7 +5,8 @@ use std::time::Duration;
 use kameo::error::Infallible;
 use kameo::mailbox::Signal;
 use kameo::prelude::*;
-use kameo::reply::{DelegatedReply, ReplySender};
+use kameo::reply::DelegatedReply;
+use kameo::reply::ReplySender;
 use tokio::select;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -19,6 +20,7 @@ use tracing::warn;
 use crate::bulb;
 use crate::bulb::Bulb;
 use crate::bulb::Command;
+use crate::config;
 use crate::i2c;
 use crate::i2c::Position;
 
@@ -41,6 +43,8 @@ pub enum Error {
 
 pub struct State {
     bulbs: HashMap<Position, Bulb>,
+    zero_timeout: Duration,
+    refresh_interval: Duration,
 }
 
 impl State {
@@ -65,7 +69,7 @@ impl State {
                 }
 
                 if let Some(last) = last_check
-                    && now - last > Duration::from_secs(1)
+                    && now - last > self.refresh_interval
                 {
                     for bulb in &mut self.bulbs.values_mut() {
                         let settled = now - start_t > settle_time;
@@ -106,7 +110,7 @@ impl State {
 
             Ok::<(), Error>(())
         };
-        match timeout(Duration::from_secs(60), zero).await {
+        match timeout(self.zero_timeout, zero).await {
             Ok(Ok(())) => {}
             Err(_) => return Err(Error::ZeroTimeout),
             Ok(Err(e)) => return Err(e),
@@ -134,6 +138,8 @@ pub struct Driver {
     mode: Mode,
     waiters: Vec<ReplySender<Result<()>>>,
     bus: ActorRef<i2c::Bus>,
+    config: config::Driver,
+    i2c_config: config::I2c,
 }
 
 impl Actor for Driver {
@@ -258,20 +264,27 @@ impl Message<WaitForIdle> for Driver {
 }
 
 impl Driver {
-    pub fn new(bus: ActorRef<i2c::Bus>) -> Self {
+    pub fn new(bus: ActorRef<i2c::Bus>, config: config::Driver, i2c_config: config::I2c) -> Self {
         Self {
             mode: Mode::Uninitialized,
             waiters: Vec::new(),
             bus,
+            config,
+            i2c_config,
         }
     }
 
     fn initialize(&self) -> State {
-        let bulbs = i2c::get_addresses()
-            .map(|(pos, addr)| (pos, Bulb::new(self.bus.clone(), addr, 1.0)))
+        let tolerance = self.config.extension_tolerance;
+        let bulbs = i2c::get_addresses(&self.i2c_config)
+            .map(|(pos, addr)| (pos, Bulb::new(self.bus.clone(), addr, tolerance)))
             .collect();
 
-        State { bulbs }
+        State {
+            bulbs,
+            zero_timeout: self.config.zero_timeout(),
+            refresh_interval: self.config.refresh_interval(),
+        }
     }
 
     fn take(&mut self) -> Mode {
