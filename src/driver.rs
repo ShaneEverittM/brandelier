@@ -5,6 +5,7 @@ use std::time::Duration;
 use kameo::error::Infallible;
 use kameo::mailbox::Signal;
 use kameo::prelude::*;
+use kameo::reply::{DelegatedReply, ReplySender};
 use tokio::select;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -13,6 +14,7 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 use crate::bulb;
 use crate::bulb::Bulb;
@@ -35,6 +37,9 @@ pub enum Error {
 
     #[error(transparent)]
     I2C(#[from] i2c::Error),
+
+    #[error("Background task failed: {0}")]
+    BackgroundTaskFailed(String),
 }
 
 pub struct State {
@@ -114,7 +119,7 @@ impl State {
     }
 }
 
-pub enum Driver {
+enum Mode {
     Uninitialized,
     Idle {
         state: State,
@@ -126,6 +131,11 @@ pub enum Driver {
         token: CancellationToken,
         cycle: JoinHandle<Result<State>>,
     },
+}
+
+pub struct Driver {
+    mode: Mode,
+    waiters: Vec<ReplySender<Result<()>>>,
 }
 
 impl Actor for Driver {
@@ -142,27 +152,29 @@ impl Actor for Driver {
         mailbox_rx: &mut MailboxReceiver<Self>,
     ) -> Option<Signal<Self>> {
         loop {
-            match self {
-                Driver::Uninitialized | Driver::Idle { .. } => return mailbox_rx.recv().await,
-                Driver::Zeroing { zeroing: task } | Driver::Cycling { cycle: task, .. } => {
-                    select! {
-                        signal = mailbox_rx.recv() => return signal,
+            let (Mode::Zeroing { zeroing: task } | Mode::Cycling { cycle: task, .. }) =
+                &mut self.mode
+            else {
+                return mailbox_rx.recv().await;
+            };
 
-                        state = task => {
-                            match state {
-                                Ok(Ok(state)) => {
-                                    *self = Self::Idle { state };
-                                }
-                                Err(error) => {
-                                    error!(?error, "Background task panicked");
-                                }
-                                Ok(Err(error)) => {
-                                    error!(?error, "Background operation failed, reinitializing")
-                                }
-                            }
-                            continue
-                        }
-                    }
+            let task_result = select! {
+                signal = mailbox_rx.recv() => return signal,
+                result = task => result,
+            };
+
+            match task_result {
+                Ok(Ok(state)) => {
+                    self.mode = Mode::Idle { state };
+                    self.notify_waiters(Ok(()));
+                }
+                Err(error) => {
+                    error!(?error, "Background task panicked");
+                    self.notify_waiters(Err(Error::BackgroundTaskFailed(error.to_string())));
+                }
+                Ok(Err(error)) => {
+                    error!(?error, "Background operation failed, reinitializing");
+                    self.notify_waiters(Err(Error::BackgroundTaskFailed(error.to_string())));
                 }
             }
         }
@@ -187,7 +199,7 @@ impl Message<Zero> for Driver {
     async fn handle(&mut self, _: Zero, _: &mut Context<Self, Self::Reply>) -> Result<()> {
         let state = self.idle().await?;
         let zeroing = task::spawn(state.zero());
-        *self = Self::Zeroing { zeroing };
+        self.mode = Mode::Zeroing { zeroing };
 
         Ok(())
     }
@@ -202,7 +214,7 @@ impl Message<Cycle> for Driver {
         let state = self.idle().await?;
         let token = CancellationToken::new();
         let cycle = task::spawn(state.cycle(token.clone()));
-        *self = Self::Cycling { token, cycle };
+        self.mode = Mode::Cycling { token, cycle };
 
         Ok(())
     }
@@ -215,14 +227,44 @@ impl Message<Stop> for Driver {
 
     async fn handle(&mut self, _: Stop, _: &mut Context<Self, Self::Reply>) -> Result<()> {
         let state = self.idle().await?;
-        *self = Self::Idle { state };
+        self.mode = Mode::Idle { state };
+        self.notify_waiters(Ok(()));
         Ok(())
+    }
+}
+
+pub struct WaitForIdle;
+
+impl Message<WaitForIdle> for Driver {
+    type Reply = DelegatedReply<Result<()>>;
+
+    async fn handle(
+        &mut self,
+        _: WaitForIdle,
+        ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let (delegated, sender) = ctx.reply_sender();
+        match sender {
+            Some(tx) if matches!(self.mode, Mode::Uninitialized | Mode::Idle { .. }) => {
+                tx.send(Ok(()));
+            }
+            Some(tx) => {
+                self.waiters.push(tx);
+            }
+            None => {
+                warn!("Sender requestd to wait for Idle via a TellRequest")
+            }
+        }
+        delegated
     }
 }
 
 impl Driver {
     pub fn new() -> Self {
-        Self::Uninitialized
+        Self {
+            mode: Mode::Uninitialized,
+            waiters: Vec::new(),
+        }
     }
 
     fn initialize() -> Result<State> {
@@ -234,31 +276,43 @@ impl Driver {
         Ok(State { bulbs })
     }
 
-    fn take(&mut self) -> Self {
-        replace(self, Driver::Uninitialized)
+    fn take(&mut self) -> Mode {
+        replace(&mut self.mode, Mode::Uninitialized)
     }
 
     async fn idle(&mut self) -> Result<State> {
-        // Make self uninitialized, as we try to idle.
-        let driver = self.take();
+        let mode = self.take();
 
-        let state = match driver {
+        let state = match mode {
             // Already in idle, do nothing.
-            Driver::Idle { state } => state,
+            Mode::Idle { state } => state,
 
             // Not yet initialized, set ourselves up.
-            Driver::Uninitialized => Self::initialize()?,
+            Mode::Uninitialized => Self::initialize()?,
 
             // Zeroing, wait for it to complete and reap the state.
-            Driver::Zeroing { zeroing } => zeroing.await??,
+            Mode::Zeroing { zeroing } => zeroing.await??,
 
             // Cycling, cancel cycle and reap the state.
-            Driver::Cycling { token, cycle } => {
+            Mode::Cycling { token, cycle } => {
                 token.cancel();
                 cycle.await??
             }
         };
 
         Ok(state)
+    }
+
+    fn notify_waiters(&mut self, result: Result<()>) {
+        if self.waiters.is_empty() {
+            return;
+        }
+        let err_msg = result.err().map(|e| e.to_string());
+        for tx in self.waiters.drain(..) {
+            tx.send(match &err_msg {
+                None => Ok(()),
+                Some(msg) => Err(Error::BackgroundTaskFailed(msg.clone())),
+            });
+        }
     }
 }
