@@ -2,6 +2,8 @@ use std::net::Ipv4Addr;
 
 use axum::Router;
 use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::routing::get;
 use kameo::prelude::*;
 use tokio::io;
@@ -38,6 +40,12 @@ pub enum Error {
 
     #[error(transparent)]
     Io(#[from] io::Error),
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+    }
 }
 
 #[derive(Clone)]
