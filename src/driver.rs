@@ -185,16 +185,6 @@ impl Actor for Driver {
     }
 }
 
-// - Load/save configurations
-//  - There may be curated configs that are "out-of-the-box"
-//  - Configurations (at least for now) encode static position
-//    - May allow just "rotation" of that static position
-// - Individual bulb control
-//   - Sliders for position and brightness
-// - Zeroing
-//   - Auto-zero in some conditions
-//   - Per-bulb zeroing on demand
-
 pub struct Zero;
 
 impl Message<Zero> for Driver {
