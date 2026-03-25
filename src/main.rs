@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
         .route("/", get(index))
         .with_state(state)
         .fallback_service(ServeDir::new("static"));
-    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 5000)).await?;
+    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 5001)).await?;
 
     axum::serve(listener, router).await?;
 
