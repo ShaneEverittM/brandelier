@@ -15,6 +15,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ordered-float = "5.1.0"
 axum = "0.8.8"
 tokio-util = "0.7.18"
-
-[target.'cfg(target_os = "linux")'.dependencies]
+tower = "0.5.3"
+tower-http = { version = "0.6.8", features = ["fs"] }
 i2cdev = "0.6.2"

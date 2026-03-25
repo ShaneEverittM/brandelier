@@ -8,6 +8,7 @@ use axum::routing::get;
 use kameo::prelude::*;
 use tokio::io;
 use tokio::net::TcpListener;
+use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use crate::driver::Cycle;
@@ -68,7 +69,10 @@ async fn main() -> Result<()> {
     let driver = Driver::spawn(Driver::new());
     let state = AppState { driver };
 
-    let router = Router::new().route("/", get(index)).with_state(state);
+    let router = Router::new()
+        .route("/", get(index))
+        .with_state(state)
+        .fallback_service(ServeDir::new("static"));
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 5000)).await?;
 
     axum::serve(listener, router).await?;
