@@ -1,7 +1,3 @@
-mod bulb;
-mod driver;
-mod i2c;
-
 use std::net::Ipv4Addr;
 
 use axum::Router;
@@ -16,6 +12,10 @@ use crate::driver::Cycle;
 use crate::driver::Driver;
 use crate::driver::Stop;
 use crate::driver::Zero;
+
+mod bulb;
+mod driver;
+mod i2c;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -39,6 +39,7 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] io::Error),
 }
+
 #[derive(Clone)]
 struct AppState {
     driver: ActorRef<Driver>,
