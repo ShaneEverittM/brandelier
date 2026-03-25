@@ -138,7 +138,6 @@ impl Bus {
 
     fn read(bus: &mut dyn I2cBus, address: u16, buffer: &mut [u8]) -> Result<()> {
         bus.read(address, buffer)?;
-        dbg!(&buffer);
 
         let mut digest = CRC.digest();
         digest.update(&address.to_be_bytes());
