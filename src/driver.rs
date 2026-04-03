@@ -246,7 +246,7 @@ impl Message<WaitForIdle> for Driver {
                 self.waiters.push(tx);
             }
             None => {
-                warn!("Sender requestd to wait for Idle via a TellRequest")
+                warn!("Sender requested to wait for Idle via a TellRequest")
             }
         }
         delegated

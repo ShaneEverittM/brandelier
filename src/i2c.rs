@@ -111,7 +111,13 @@ pub enum Error {
     Eof,
 
     #[error("IO operation failed after retries")]
-    Retry(#[from] Box<retry::Error<Self>>),
+    Retry(Box<retry::Error<Self>>),
+}
+
+impl From<retry::Error<Error>> for Error {
+    fn from(value: retry::Error<Error>) -> Self {
+        Error::Retry(Box::new(value))
+    }
 }
 
 #[derive(Actor)]
@@ -196,11 +202,9 @@ impl Message<Read> for Bus {
         debug!(size = size_with_crc, "Creating read buffer");
         self.read_buf.resize(size_with_crc, 0xff);
 
-        retry(Fixed::from(self.retry_delay).take(self.retries), || {
-            Bus::read(&mut *self.bus, msg.address, &mut self.read_buf)
-                .inspect_err(|e| warn!(?e, "I2c"))
-        })
-        .map_err(Box::new)?;
+        let strategy = Fixed::from(self.retry_delay).take(self.retries);
+        let operation = || Bus::read(&mut *self.bus, msg.address, &mut self.read_buf);
+        retry(strategy, operation)?;
 
         Ok(self.read_buf.split_to(msg.amount).freeze())
     }
@@ -217,11 +221,9 @@ impl Message<Write> for Bus {
     async fn handle(&mut self, msg: Write, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
         self.rate_limit(msg.address).await;
 
-        retry(Fixed::from(self.retry_delay).take(self.retries), || {
-            Bus::write(&mut *self.bus, msg.address, msg.data.clone())
-                .inspect_err(|e| warn!(?e, "I2c"))
-        })
-        .map_err(Box::new)?;
+        let strategy = Fixed::from(self.retry_delay).take(self.retries);
+        let operation = || Bus::write(&mut *self.bus, msg.address, msg.data.clone());
+        retry(strategy, operation)?;
 
         Ok(())
     }
