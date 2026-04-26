@@ -1,0 +1,18 @@
+[server]
+host = "0.0.0.0"
+port = 5001
+static_dir = "static"
+
+[i2c]
+device_path = "/dev/i2c-1"
+base_address = 8 # 0x08
+num_devices = 5
+device_spacing = 4.0
+retries = 3
+retry_delay_ms = 20
+rate_limit_ms = 40
+
+[driver]
+zero_timeout_secs = 60
+extension_tolerance = 1.0
+refresh_interval_secs = 1
