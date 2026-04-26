@@ -1,0 +1,412 @@
+/* Brandelier — main app */
+
+import React from 'react';
+import { BULBS, Chandelier } from './chandelier.jsx';
+import { CameraWidget } from './camera-widget.jsx';
+import { Inspector, WavePanel, GroupsPanel } from './panels.jsx';
+
+const TWEAKS = {
+  aesthetic: 'studio',
+  theme: 'dark',
+  ambiance: 'warm',
+  renderStyle: 'glow',
+  showHelp: true,
+};
+
+function App() {
+  const t = TWEAKS;
+
+  // bulbState: { id: { pos, bright } }   pos: 0..1 (0=high/short, 1=low/long), bright: 0..1
+  const initialState = React.useMemo(() => {
+    const s = {};
+    BULBS.forEach((b) => {
+      // Initial chandelier silhouette: outer bulbs hang lower, inner higher.
+      // Use slot distance from center to compute drop, plus tiny variance.
+      const dist = Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3);
+      // pos: 0 = high (short cord), 1 = low (long cord). Outer ring drops more.
+      const pos = 0.18 + (dist / 2.5) * 0.45;
+      s[b.id] = { pos: Math.max(0, Math.min(1, pos)), bright: 0.0 };
+    });
+    return s;
+  }, []);
+
+  const [bulbState, setBulbState] = React.useState(initialState);
+  const [selection, setSelection] = React.useState(new Set());
+  const [history, setHistory] = React.useState([]);
+  const [future, setFuture] = React.useState([]);
+  const [mode, setMode] = React.useState('manual'); // manual | wave | precise
+  const [activeGroup, setActiveGroup] = React.useState(null);
+  const [groups, setGroups] = React.useState([
+    { id: 'g1', name: 'Inner ring', ids: BULBS.filter(b => b.ring === 1).map(b => b.id) },
+    { id: 'g2', name: 'Outer ring', ids: BULBS.filter(b => b.ring === 2).map(b => b.id) },
+    { id: 'g3', name: 'Center only', ids: ['c'] },
+  ]);
+
+  const [wave, setWave] = React.useState({ pattern: 'sine', amp: 0.4, speed: 1.0, phase: 0.5 });
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [camera, setCamera] = React.useState({ yaw: -0.35, elevation: 0.28 });
+  const [orbiting, setOrbiting] = React.useState(false);
+
+  // Theme application
+  React.useEffect(() => {
+    document.body.dataset.aesthetic = t.aesthetic;
+    document.body.dataset.theme = t.theme;
+    document.body.dataset.ambiance = t.ambiance;
+  }, [t.aesthetic, t.theme, t.ambiance]);
+
+  // Push state to history before mutation
+  const pushHistory = React.useCallback(() => {
+    setHistory((h) => [...h.slice(-49), bulbState]);
+    setFuture([]);
+  }, [bulbState]);
+
+  const undo = () => {
+    if (history.length === 0) return;
+    const prev = history[history.length - 1];
+    setHistory((h) => h.slice(0, -1));
+    setFuture((f) => [bulbState, ...f].slice(0, 50));
+    setBulbState(prev);
+  };
+  const redo = () => {
+    if (future.length === 0) return;
+    const next = future[0];
+    setFuture((f) => f.slice(1));
+    setHistory((h) => [...h, bulbState]);
+    setBulbState(next);
+  };
+
+  // Selection
+  const handleSelect = (id, additive) => {
+    setSelection((cur) => {
+      const next = new Set(additive ? cur : []);
+      if (additive && cur.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+    setActiveGroup(null);
+  };
+  const handleClear = () => {
+    setSelection(new Set());
+    setActiveGroup(null);
+  };
+  const selectAll = () => setSelection(new Set(BULBS.map(b => b.id)));
+
+  // Drag
+  const dragSnapshotRef = React.useRef(null);
+  const handleDrag = ({ dx, dy, axis }) => {
+    if (selection.size === 0) return;
+    if (!dragSnapshotRef.current) {
+      dragSnapshotRef.current = bulbState;
+      pushHistory();
+    }
+    setBulbState((cur) => {
+      const next = { ...cur };
+      selection.forEach((id) => {
+        const s = next[id] || { pos: 0.5, bright: 0.7 };
+        if (axis === 'y') {
+          // Drag up reduces pos (raises bulb), down increases
+          const newPos = Math.max(0, Math.min(1, s.pos + dy / 320));
+          next[id] = { ...s, pos: newPos };
+        } else if (axis === 'x') {
+          const newBright = Math.max(0, Math.min(1, s.bright + dx / 280));
+          next[id] = { ...s, bright: newBright };
+        }
+      });
+      return next;
+    });
+  };
+  const handleDragEnd = () => {
+    dragSnapshotRef.current = null;
+  };
+
+  const handleLongPress = (id) => {
+    pushHistory();
+    setBulbState((cur) => {
+      const next = { ...cur };
+      selection.forEach((sid) => {
+        next[sid] = { pos: 0.5, bright: 0 };
+      });
+      if (!selection.has(id)) {
+        next[id] = { pos: 0.5, bright: 0 };
+      }
+      return next;
+    });
+  };
+
+  // Groups
+  const activateGroup = (gid) => {
+    const g = groups.find((x) => x.id === gid);
+    if (!g) return;
+    setSelection(new Set(g.ids));
+    setActiveGroup(gid);
+  };
+  const createGroup = (name) => {
+    if (selection.size === 0) return;
+    const id = 'g' + Date.now();
+    setGroups((gs) => [...gs, { id, name, ids: [...selection] }]);
+    setActiveGroup(id);
+  };
+
+  // Wave animation
+  const waveStartRef = React.useRef(0);
+  React.useEffect(() => {
+    if (!isPlaying) return;
+    waveStartRef.current = performance.now();
+    const baseSnapshot = { ...bulbState };
+    let raf;
+    const tick = () => {
+      const t = (performance.now() - waveStartRef.current) / 1000;
+      setBulbState((cur) => {
+        const next = { ...cur };
+        const targets = selection.size > 0 ? [...selection] : BULBS.map(b => b.id);
+        targets.forEach((id) => {
+          const b = BULBS.find((x) => x.id === id);
+          if (!b) return;
+          const base = baseSnapshot[id] || { pos: 0.5, bright: 0.7 };
+          const phaseOffset = wave.pattern === 'ripple'
+            ? Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3) * wave.phase * 2
+            : b.x3 * wave.phase * 1.2;
+          const omega = 2 * Math.PI * wave.speed * 0.4;
+          let v = 0;
+          if (wave.pattern === 'sine' || wave.pattern === 'ripple') {
+            v = Math.sin(omega * t - phaseOffset);
+          } else if (wave.pattern === 'breath') {
+            v = (Math.sin(omega * t * 0.6) + 1) / 2 - 0.5;
+            v *= 2;
+          } else if (wave.pattern === 'chase') {
+            const pos = ((omega * t / Math.PI / 2) - phaseOffset / Math.PI / 2) % 1;
+            v = Math.cos(pos * 2 * Math.PI);
+          }
+          const offset = v * wave.amp * 0.4;
+          next[id] = {
+            pos: Math.max(0, Math.min(1, base.pos + offset)),
+            bright: base.bright,
+          };
+        });
+        return next;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, wave, selection]);
+
+  // Keyboard
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault(); undo();
+      } else if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault(); redo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'a') {
+        e.preventDefault(); selectAll();
+      } else if (e.key === 'Escape') {
+        handleClear();
+      } else if (e.key === ' ' && mode === 'wave') {
+        e.preventDefault();
+        setIsPlaying((p) => !p);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const setBrightForSelection = (b) => {
+    pushHistory();
+    setBulbState((cur) => {
+      const next = { ...cur };
+      selection.forEach((id) => {
+        next[id] = { ...next[id], bright: b };
+      });
+      return next;
+    });
+  };
+
+  return (
+    <div className="app">
+      {/* Top bar */}
+      <header className="topbar">
+        <div className="brand">
+          <span className="dot"></span>
+          Brandelier
+          <em>kinetic chandelier · console</em>
+        </div>
+
+        <nav className="modebar" role="tablist">
+          <button role="tab" aria-pressed={mode === 'manual'} onClick={() => setMode('manual')}>Manual</button>
+          <button role="tab" aria-pressed={mode === 'wave'} onClick={() => setMode('wave')}>Wave</button>
+          <button role="tab" aria-pressed={mode === 'precise'} onClick={() => setMode('precise')}>Precise</button>
+        </nav>
+
+        <div className="topbar-right">
+          <span className="broadcast">
+            <span className="live"></span>
+            Broadcasting · 19 fixtures
+          </span>
+          <button className="iconbtn" onClick={undo} disabled={history.length === 0} title="Undo (⌘Z)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 8 L 6 5 M3 8 L 6 11 M3 8 H 11 A 2 2 0 0 1 13 10 V 11" />
+            </svg>
+          </button>
+          <button className="iconbtn" onClick={redo} disabled={future.length === 0} title="Redo (⌘⇧Z)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 8 L 10 5 M13 8 L 10 11 M13 8 H 5 A 2 2 0 0 0 3 10 V 11" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      {/* Stage */}
+      <main
+        className="stage"
+        onMouseDown={(e) => {
+          // Right-click or shift+empty drags camera; otherwise empty click clears selection
+          if (e.button === 2 || (e.shiftKey && e.target === e.currentTarget) || e.altKey) {
+            e.preventDefault();
+            setOrbiting(true);
+            const startX = e.clientX, startY = e.clientY;
+            const startCam = { ...camera };
+            const onMove = (ev) => {
+              const dx = ev.clientX - startX;
+              const dy = ev.clientY - startY;
+              setCamera({
+                yaw: startCam.yaw + dx * 0.006,
+                elevation: Math.max(-1.0, Math.min(1.4, startCam.elevation + dy * 0.005)),
+              });
+            };
+            const onUp = () => {
+              setOrbiting(false);
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+        style={{ cursor: orbiting ? 'grabbing' : 'default' }}
+      >
+        <div className="stage-meta">
+          <span className="l">Selection</span>
+          <span className="v">{selection.size} of 19 fixtures</span>
+        </div>
+
+        <Chandelier
+          bulbState={bulbState}
+          selection={selection}
+          onSelect={handleSelect}
+          onClear={handleClear}
+          onDrag={handleDrag}
+          onDragEnd={handleDragEnd}
+          onLongPress={handleLongPress}
+          renderStyle={t.renderStyle}
+          camera={camera}
+        />
+
+        {/* Camera widget */}
+        <CameraWidget camera={camera} setCamera={setCamera} />
+
+        {t.showHelp && (
+          <div className="stage-help">
+            <span><kbd>drag ↕</kbd> height</span>
+            <span><kbd>drag ↔</kbd> brightness</span>
+            <span><kbd>shift</kbd>+click multi</span>
+            <span><kbd>alt</kbd>+drag orbit</span>
+            <span><kbd>esc</kbd> clear</span>
+          </div>
+        )}
+      </main>
+
+      {/* Right rail */}
+      <aside className="rail">
+        <section className="rail-section">
+          <div className="rail-h">
+            <h3>Selection</h3>
+            <span className="num">{selection.size} / 19</span>
+          </div>
+          <Inspector
+            selectedIds={selection}
+            bulbState={bulbState}
+            onClear={handleClear}
+            onZero={() => {
+              pushHistory();
+              setBulbState((cur) => {
+                const next = { ...cur };
+                selection.forEach((id) => {
+                  next[id] = { pos: 0.5, bright: 0 };
+                });
+                return next;
+              });
+            }}
+          />
+          {selection.size > 0 && (
+            <div className="action-row">
+              <button className="btn" onClick={() => setBrightForSelection(0)}>Off</button>
+              <button className="btn" onClick={() => setBrightForSelection(0.5)}>50%</button>
+              <button className="btn primary" onClick={() => setBrightForSelection(1)}>Full</button>
+            </div>
+          )}
+        </section>
+
+        <section className="rail-section">
+          <GroupsPanel
+            groups={groups}
+            activeGroup={activeGroup}
+            onActivate={activateGroup}
+            onCreate={createGroup}
+            currentSelectionCount={selection.size}
+          />
+        </section>
+
+        {mode === 'wave' && (
+          <section className="rail-section">
+            <WavePanel
+              wave={wave}
+              onWave={setWave}
+              isPlaying={isPlaying}
+              onPlay={() => { setMode('wave'); setIsPlaying(true); }}
+              onStop={() => setIsPlaying(false)}
+            />
+          </section>
+        )}
+      </aside>
+
+      {/* Bottom action bar */}
+      <footer className="actionbar">
+        <div className="group">
+          <button className="transport-btn" onClick={selectAll}>Select all</button>
+          <button className="transport-btn" onClick={handleClear}>Clear</button>
+          <div className="divider"></div>
+          <button className="transport-btn">Save config</button>
+          <button className="transport-btn">Load</button>
+          <button className="transport-btn">Schedule</button>
+        </div>
+
+        <div className="group">
+          <span className="connection">
+            <span className="dot"></span>
+            Live · ws://chandelier.local
+          </span>
+          <div className="divider"></div>
+          {isPlaying ? (
+            <button className="transport-btn stop" onClick={() => setIsPlaying(false)}>
+              <svg viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
+              Stop
+            </button>
+          ) : (
+            <button className="transport-btn primary" onClick={() => { setMode('wave'); setIsPlaying(true); }}>
+              <svg viewBox="0 0 12 12" fill="currentColor"><path d="M2 1 L 11 6 L 2 11 Z" /></svg>
+              Run wave
+            </button>
+          )}
+        </div>
+      </footer>
+
+    </div>
+  );
+}
+
+export default App;
