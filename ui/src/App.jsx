@@ -1,9 +1,11 @@
 /* Brandelier — main app */
 
 import React from 'react';
-import { BULBS, Chandelier } from './chandelier.jsx';
-import { CameraWidget } from './camera-widget.jsx';
-import { Inspector, WavePanel, GroupsPanel } from './panels.jsx';
+import { BULBS, Chandelier } from './components/Chandelier.jsx';
+import { CameraWidget } from './components/CameraWidget.jsx';
+import { Inspector } from './components/Inspector.jsx';
+import { WavePanel } from './components/WavePanel.jsx';
+import { GroupsPanel } from './components/GroupsPanel.jsx';
 
 const TWEAKS = {
   aesthetic: 'studio',
