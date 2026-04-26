@@ -7,16 +7,10 @@ import { Inspector } from './components/Inspector.jsx';
 import { WavePanel } from './components/WavePanel.jsx';
 import { GroupsPanel } from './components/GroupsPanel.jsx';
 
-const TWEAKS = {
-  aesthetic: 'studio',
-  theme: 'dark',
-  ambiance: 'warm',
-  renderStyle: 'glow',
-  showHelp: true,
-};
+const RENDER_STYLE = 'glow';
+const SHOW_HELP = true;
 
 function App() {
-  const t = TWEAKS;
 
   // bulbState: { id: { pos, bright } }   pos: 0..1 (0=high/short, 1=low/long), bright: 0..1
   const initialState = React.useMemo(() => {
@@ -48,13 +42,6 @@ function App() {
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [camera, setCamera] = React.useState({ yaw: -0.35, elevation: 0.28 });
   const [orbiting, setOrbiting] = React.useState(false);
-
-  // Theme application
-  React.useEffect(() => {
-    document.body.dataset.aesthetic = t.aesthetic;
-    document.body.dataset.theme = t.theme;
-    document.body.dataset.ambiance = t.ambiance;
-  }, [t.aesthetic, t.theme, t.ambiance]);
 
   // Push state to history before mutation
   const pushHistory = React.useCallback(() => {
@@ -304,14 +291,14 @@ function App() {
           onDrag={handleDrag}
           onDragEnd={handleDragEnd}
           onLongPress={handleLongPress}
-          renderStyle={t.renderStyle}
+          renderStyle={RENDER_STYLE}
           camera={camera}
         />
 
         {/* Camera widget */}
         <CameraWidget camera={camera} setCamera={setCamera} />
 
-        {t.showHelp && (
+        {SHOW_HELP && (
           <div className="stage-help">
             <span><kbd>drag ↕</kbd> height</span>
             <span><kbd>drag ↔</kbd> brightness</span>
