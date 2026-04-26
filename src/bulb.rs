@@ -1,3 +1,4 @@
+use std::ops::Mul;
 use std::ops::Sub;
 
 use bytes::Bytes;
@@ -111,8 +112,11 @@ impl Command {
 #[derive(Debug)]
 pub struct Response {
     pub extension: f64,
+    pub speed: f64,
     pub light: bool,
     pub zeroing: bool,
+    pub disable_all: bool,
+    pub eeprom_error: bool,
 }
 
 impl Response {
@@ -125,8 +129,11 @@ impl Response {
 
         Ok(Self {
             extension: f64::from((data[0] as u16) + (data[1] as u16) / 256),
-            light: data[2] != 0,
-            zeroing: data[3] != 0,
+            speed: (data[2] as f64) / 32.0,
+            light: data[3] & 0b0001 != 0,
+            zeroing: data[3] & 0b0010 != 0,
+            disable_all: data[3] & 0b0100 != 0,
+            eeprom_error: data[3] & 0b1000 != 0,
         })
     }
 }
@@ -135,8 +142,12 @@ pub struct Bulb {
     bus: ActorRef<Bus>,
     address: u16,
     real_extension: f64,
+    real_speed: f64,
+    max_speed: f64,
     light_on: bool,
     zeroing: bool,
+    disable_all: bool,
+    eeprom_error: bool,
 
     extension_tolerance: f64,
     last_requested_extension: f64,
@@ -148,8 +159,12 @@ impl Bulb {
             bus,
             address,
             real_extension: 0.0,
+            real_speed: 0.0,
+            max_speed: 1.0, // this needs to get updated whenever SetMaxExtension is run
             light_on: false,
             zeroing: false,
+            disable_all: false,
+            eeprom_error: false,
             extension_tolerance,
             last_requested_extension: 0.0,
         }
@@ -196,15 +211,20 @@ impl Bulb {
         };
 
         self.real_extension = response.extension;
+        self.real_speed = response.speed;
         self.light_on = response.light;
         self.zeroing = response.zeroing;
+        self.disable_all = response.disable_all;
+        self.eeprom_error = response.eeprom_error;
 
         if report_drift
-            && self
+            && self // if the real bulb is off by more than a certain distance
                 .last_requested_extension
                 .sub(self.real_extension)
                 .abs()
                 .gt(&self.extension_tolerance)
+            && self.real_speed.mul(2.0).lt(&self.max_speed)
+        // and if running at less than half of max speed
         {
             warn!(
                 expected = self.last_requested_extension,
