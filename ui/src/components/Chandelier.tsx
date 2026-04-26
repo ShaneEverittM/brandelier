@@ -3,19 +3,29 @@
    Camera: yaw (rotate around Y) + elevation (tilt). Front view is yaw=0,elev=12°.
 */
 
-import React from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import type {
+  Bulb,
+  BulbId,
+  BulbState,
+  Camera,
+  DragAxis,
+  DragDelta,
+  RenderStyle,
+} from '../types';
 
 const TAU = Math.PI * 2;
 
-function buildBulbLayout() {
-  const bulbs = [];
+function buildBulbLayout(): Bulb[] {
+  const bulbs: Bulb[] = [];
   bulbs.push({ id: 'c', ring: 0, ringIndex: 0, x3: 0, z3: 0 });
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * TAU + Math.PI / 6;
     bulbs.push({
       id: `r1-${i}`, ring: 1, ringIndex: i,
-      x3: Math.cos(a) * 1.0,
-      z3: Math.sin(a) * 1.0,
+      x3: Math.cos(a),
+      z3: Math.sin(a),
     });
   }
   for (let i = 0; i < 12; i++) {
@@ -35,7 +45,6 @@ const SVG_W = 920;
 const SVG_H = 620;
 const CENTER_X = SVG_W / 2;
 const CENTER_Y = 140;
-const PLATE_R = 130;
 const WORLD_SCALE = 110;
 const CAMERA_DIST = 9;
 const FOV_FACTOR = 7;
@@ -44,8 +53,10 @@ const TOP_HOLE_R = 5.5;
 const MAX_DROP = 6.5;
 const MIN_DROP = 0.6;
 
+type Projected = { x: number; y: number; z: number; scale: number };
+
 // 3D point projection: rotate by yaw around Y, tilt by elevation, then perspective
-function project(x, y, z, yaw, elevation) {
+function project(x: number, y: number, z: number, yaw: number, elevation: number): Projected {
   // yaw rotates around Y axis (top-down spin)
   const cy = Math.cos(yaw), sy = Math.sin(yaw);
   const x1 = x * cy - z * sy;
@@ -66,9 +77,9 @@ function project(x, y, z, yaw, elevation) {
 }
 
 // Plate ellipse path in 3D — sample points on circle at y=0
-function platePath(yaw, elevation) {
+function platePath(yaw: number, elevation: number): Projected[] {
   const N = 48;
-  const pts = [];
+  const pts: Projected[] = [];
   for (let i = 0; i <= N; i++) {
     const a = (i / N) * TAU;
     const p = project(Math.cos(a) * 2.6, 0, Math.sin(a) * 2.6, yaw, elevation);
@@ -78,13 +89,34 @@ function platePath(yaw, elevation) {
 }
 
 // Plate as solid filled with depth shading: build outer + inner offset for thickness
-function platePathString(pts) {
+function platePathString(pts: Projected[]): string {
   return pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') + ' Z';
 }
 
+type DragState = {
+  id: BulbId;
+  startX: number;
+  startY: number;
+  axis: DragAxis;
+  lastX: number;
+  lastY: number;
+};
+
+type ChandelierProps = {
+  bulbState: BulbState;
+  selection: Set<BulbId>;
+  onSelect: (id: BulbId, additive: boolean) => void;
+  onClear: () => void;
+  onDrag: (delta: DragDelta) => void;
+  onDragEnd: () => void;
+  onLongPress?: (id: BulbId) => void;
+  renderStyle: RenderStyle;
+  camera: Camera;
+};
+
 // ── Chandelier component ────────────────────────────────────────────
 export function Chandelier({
-  bulbState,        // { id: { pos, bright } }   pos: 0..1 (drop ratio)
+  bulbState,
   selection,
   onSelect,
   onClear,
@@ -92,13 +124,12 @@ export function Chandelier({
   onDragEnd,
   onLongPress,
   renderStyle,
-  camera,           // { yaw, elevation }
-}) {
-  const svgRef = React.useRef(null);
-  const [drag, setDrag] = React.useState(null);
-  const longPressRef = React.useRef(null);
+  camera,
+}: ChandelierProps) {
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleBulbDown = (e, bulb) => {
+  const handleBulbDown = (e: ReactMouseEvent, bulb: Bulb) => {
     e.stopPropagation();
     const additive = e.shiftKey || e.metaKey;
     onSelect(bulb.id, additive);
@@ -111,15 +142,15 @@ export function Chandelier({
     setDrag({ id: bulb.id, startX: e.clientX, startY: e.clientY, axis: null, lastX: e.clientX, lastY: e.clientY });
   };
 
-  const handleTopHoleDown = (e, bulb) => {
+  const handleTopHoleDown = (e: ReactMouseEvent, bulb: Bulb) => {
     e.stopPropagation();
     const additive = e.shiftKey || e.metaKey;
     onSelect(bulb.id, additive);
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!drag) return;
-    const onMove = (e) => {
+    const onMove = (e: MouseEvent) => {
       if (longPressRef.current) {
         const moved = Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY);
         if (moved > 6) {
@@ -173,13 +204,9 @@ export function Chandelier({
   const plate = platePath(yaw, elevation);
   const plateStr = platePathString(plate);
 
-  // Plate edge tone — slightly darker than fill
-  const plateY = plate.reduce((s, p) => s + p.y, 0) / plate.length;
-
   return (
     <div className="chandelier-wrap" onMouseDown={onClear}>
       <svg
-        ref={svgRef}
         className="chandelier"
         viewBox={`0 0 ${SVG_W} ${SVG_H}`}
         preserveAspectRatio="xMidYMid meet"

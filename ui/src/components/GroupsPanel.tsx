@@ -1,6 +1,15 @@
 import { useState } from 'react';
+import type { Group } from '../types';
 
-export function GroupsPanel({ groups, activeGroup, onActivate, onCreate, currentSelectionCount }) {
+type Props = {
+  groups: Group[];
+  activeGroup: string | null;
+  onActivate: (id: string) => void;
+  onCreate: (name: string) => void;
+  currentSelectionCount: number;
+};
+
+export function GroupsPanel({ groups, activeGroup, onActivate, onCreate, currentSelectionCount }: Props) {
   const [name, setName] = useState('');
   return (
     <div className="groups">

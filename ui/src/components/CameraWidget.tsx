@@ -1,16 +1,20 @@
 /* Camera widget — small orbital control in the stage corner */
 
-import React from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { Camera } from '../types';
 
-export function CameraWidget({ camera, setCamera }) {
-  const trackRef = React.useRef(null);
+type Props = {
+  camera: Camera;
+  setCamera: (next: Camera) => void;
+};
 
-  const startDrag = (e) => {
+export function CameraWidget({ camera, setCamera }: Props) {
+  const startDrag = (e: ReactMouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     const start = { ...camera };
-    const onMove = (ev) => {
+    const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
       setCamera({
@@ -46,7 +50,6 @@ export function CameraWidget({ camera, setCamera }) {
       <div className="cw-h">View</div>
       <div className="cw-globe-row">
         <div
-          ref={trackRef}
           className="cw-globe"
           onMouseDown={startDrag}
           title="Drag to orbit"

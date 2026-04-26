@@ -1,20 +1,29 @@
 /* Brandelier — main app */
 
-import React from 'react';
-import { BULBS, Chandelier } from './components/Chandelier.jsx';
-import { CameraWidget } from './components/CameraWidget.jsx';
-import { Inspector } from './components/Inspector.jsx';
-import { WavePanel } from './components/WavePanel.jsx';
-import { GroupsPanel } from './components/GroupsPanel.jsx';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BULBS, Chandelier } from './components/Chandelier';
+import { CameraWidget } from './components/CameraWidget';
+import { Inspector } from './components/Inspector';
+import { WavePanel } from './components/WavePanel';
+import { GroupsPanel } from './components/GroupsPanel';
+import type {
+  BulbId,
+  BulbState,
+  Camera,
+  DragDelta,
+  Group,
+  Mode,
+  RenderStyle,
+  Wave,
+} from './types';
 
-const RENDER_STYLE = 'glow';
+const RENDER_STYLE: RenderStyle = 'glow';
 const SHOW_HELP = true;
 
 function App() {
-
   // bulbState: { id: { pos, bright } }   pos: 0..1 (0=high/short, 1=low/long), bright: 0..1
-  const initialState = React.useMemo(() => {
-    const s = {};
+  const initialState = useMemo<BulbState>(() => {
+    const s: BulbState = {};
     BULBS.forEach((b) => {
       // Initial chandelier silhouette: outer bulbs hang lower, inner higher.
       // Use slot distance from center to compute drop, plus tiny variance.
@@ -26,25 +35,25 @@ function App() {
     return s;
   }, []);
 
-  const [bulbState, setBulbState] = React.useState(initialState);
-  const [selection, setSelection] = React.useState(new Set());
-  const [history, setHistory] = React.useState([]);
-  const [future, setFuture] = React.useState([]);
-  const [mode, setMode] = React.useState('manual'); // manual | wave | precise
-  const [activeGroup, setActiveGroup] = React.useState(null);
-  const [groups, setGroups] = React.useState([
-    { id: 'g1', name: 'Inner ring', ids: BULBS.filter(b => b.ring === 1).map(b => b.id) },
-    { id: 'g2', name: 'Outer ring', ids: BULBS.filter(b => b.ring === 2).map(b => b.id) },
+  const [bulbState, setBulbState] = useState<BulbState>(initialState);
+  const [selection, setSelection] = useState<Set<BulbId>>(new Set());
+  const [history, setHistory] = useState<BulbState[]>([]);
+  const [future, setFuture] = useState<BulbState[]>([]);
+  const [mode, setMode] = useState<Mode>('manual');
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
+  const [groups, setGroups] = useState<Group[]>([
+    { id: 'g1', name: 'Inner ring', ids: BULBS.filter((b) => b.ring === 1).map((b) => b.id) },
+    { id: 'g2', name: 'Outer ring', ids: BULBS.filter((b) => b.ring === 2).map((b) => b.id) },
     { id: 'g3', name: 'Center only', ids: ['c'] },
   ]);
 
-  const [wave, setWave] = React.useState({ pattern: 'sine', amp: 0.4, speed: 1.0, phase: 0.5 });
-  const [isPlaying, setIsPlaying] = React.useState(false);
-  const [camera, setCamera] = React.useState({ yaw: -0.35, elevation: 0.28 });
-  const [orbiting, setOrbiting] = React.useState(false);
+  const [wave, setWave] = useState<Wave>({ pattern: 'sine', amp: 0.4, speed: 1.0, phase: 0.5 });
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
+  const [orbiting, setOrbiting] = useState(false);
 
   // Push state to history before mutation
-  const pushHistory = React.useCallback(() => {
+  const pushHistory = useCallback(() => {
     setHistory((h) => [...h.slice(-49), bulbState]);
     setFuture([]);
   }, [bulbState]);
@@ -65,9 +74,9 @@ function App() {
   };
 
   // Selection
-  const handleSelect = (id, additive) => {
+  const handleSelect = (id: BulbId, additive: boolean) => {
     setSelection((cur) => {
-      const next = new Set(additive ? cur : []);
+      const next = new Set<BulbId>(additive ? cur : []);
       if (additive && cur.has(id)) {
         next.delete(id);
       } else {
@@ -81,11 +90,11 @@ function App() {
     setSelection(new Set());
     setActiveGroup(null);
   };
-  const selectAll = () => setSelection(new Set(BULBS.map(b => b.id)));
+  const selectAll = () => setSelection(new Set(BULBS.map((b) => b.id)));
 
   // Drag
-  const dragSnapshotRef = React.useRef(null);
-  const handleDrag = ({ dx, dy, axis }) => {
+  const dragSnapshotRef = useRef<BulbState | null>(null);
+  const handleDrag = ({ dx, dy, axis }: DragDelta) => {
     if (selection.size === 0) return;
     if (!dragSnapshotRef.current) {
       dragSnapshotRef.current = bulbState;
@@ -111,7 +120,7 @@ function App() {
     dragSnapshotRef.current = null;
   };
 
-  const handleLongPress = (id) => {
+  const handleLongPress = (id: BulbId) => {
     pushHistory();
     setBulbState((cur) => {
       const next = { ...cur };
@@ -126,13 +135,13 @@ function App() {
   };
 
   // Groups
-  const activateGroup = (gid) => {
+  const activateGroup = (gid: string) => {
     const g = groups.find((x) => x.id === gid);
     if (!g) return;
     setSelection(new Set(g.ids));
     setActiveGroup(gid);
   };
-  const createGroup = (name) => {
+  const createGroup = (name: string) => {
     if (selection.size === 0) return;
     const id = 'g' + Date.now();
     setGroups((gs) => [...gs, { id, name, ids: [...selection] }]);
@@ -140,17 +149,17 @@ function App() {
   };
 
   // Wave animation
-  const waveStartRef = React.useRef(0);
-  React.useEffect(() => {
+  const waveStartRef = useRef(0);
+  useEffect(() => {
     if (!isPlaying) return;
     waveStartRef.current = performance.now();
     const baseSnapshot = { ...bulbState };
-    let raf;
+    let raf = 0;
     const tick = () => {
       const t = (performance.now() - waveStartRef.current) / 1000;
       setBulbState((cur) => {
         const next = { ...cur };
-        const targets = selection.size > 0 ? [...selection] : BULBS.map(b => b.id);
+        const targets = selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
         targets.forEach((id) => {
           const b = BULBS.find((x) => x.id === id);
           if (!b) return;
@@ -181,11 +190,11 @@ function App() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, wave, selection]);
+  }, [isPlaying, wave, selection, bulbState]);
 
   // Keyboard
-  React.useEffect(() => {
-    const onKey = (e) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault(); undo();
       } else if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
@@ -203,7 +212,7 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const setBrightForSelection = (b) => {
+  const setBrightForSelection = (b: number) => {
     pushHistory();
     setBulbState((cur) => {
       const next = { ...cur };
@@ -258,7 +267,7 @@ function App() {
             setOrbiting(true);
             const startX = e.clientX, startY = e.clientY;
             const startCam = { ...camera };
-            const onMove = (ev) => {
+            const onMove = (ev: MouseEvent) => {
               const dx = ev.clientX - startX;
               const dy = ev.clientY - startY;
               setCamera({

@@ -1,4 +1,13 @@
-export function Inspector({ selectedIds, bulbState, onClear, onZero }) {
+import type { BulbId, BulbState } from '../types';
+
+type Props = {
+  selectedIds: Set<BulbId>;
+  bulbState: BulbState;
+  onClear: () => void;
+  onZero: () => void;
+};
+
+export function Inspector({ selectedIds, bulbState, onClear, onZero }: Props) {
   const n = selectedIds.size;
   if (n === 0) {
     return (

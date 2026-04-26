@@ -1,11 +1,22 @@
-const PATTERNS = [
+import type { ReactNode } from 'react';
+import type { Wave, WavePattern } from '../types';
+
+const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
   { id: 'sine', name: 'Wave', icon: <path d="M2 8 Q 9 1 16 8 T 30 8 T 34 8" /> },
   { id: 'ripple', name: 'Ripple', icon: <g><circle cx="18" cy="8" r="2" fill="currentColor" /><circle cx="18" cy="8" r="6" /><circle cx="18" cy="8" r="10" /></g> },
   { id: 'breath', name: 'Breath', icon: <path d="M2 8 C 8 1, 14 1, 18 8 C 22 15, 28 15, 34 8" /> },
   { id: 'chase', name: 'Chase', icon: <g><line x1="3" y1="8" x2="9" y2="8" /><line x1="14" y1="8" x2="20" y2="8" /><line x1="25" y1="8" x2="33" y2="8" /></g> },
 ];
 
-export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }) {
+type Props = {
+  wave: Wave;
+  onWave: (next: Wave) => void;
+  isPlaying: boolean;
+  onPlay: () => void;
+  onStop: () => void;
+};
+
+export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
   return (
     <div className="wave">
       <div className="rail-h">
