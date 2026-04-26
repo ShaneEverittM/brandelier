@@ -15,7 +15,6 @@ use retry::retry;
 use tokio::time::Instant;
 use tokio::time::sleep_until;
 use tracing::debug;
-use tracing::warn;
 
 use crate::config;
 
