@@ -228,7 +228,7 @@ impl Message<Write> for Bus {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct Position {
     pub x: OrderedFloat<f64>,
     pub y: OrderedFloat<f64>,

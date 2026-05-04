@@ -1,0 +1,20 @@
+[server]
+host = "0.0.0.0"
+port = 5001
+static_dir = "static"
+
+[i2c]
+device_path = "/dev/i2c-1"
+retries = 3
+retry_delay_ms = 20
+rate_limit_ms = 40
+
+[driver]
+zero_timeout_secs = 60
+extension_tolerance = 1.0
+refresh_interval_secs = 1
+
+[topology]
+center = 0xFF
+inner  = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+outer  = [0x08, 0x09, 0x0A, 0x0B, 0x0C, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]

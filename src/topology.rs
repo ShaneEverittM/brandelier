@@ -31,6 +31,7 @@ pub const DISABLED_ADDRESS: u16 = 0xFF;
 pub const MIN_VALID_ADDRESS: u16 = 0x08;
 pub const MAX_VALID_ADDRESS: u16 = 0x77;
 
+#[derive(serde::Serialize)]
 pub struct BulbSlot {
     pub id: BulbId,
     pub position: Position,
@@ -39,11 +40,11 @@ pub struct BulbSlot {
 }
 
 pub const INNER_COUNT: u16 = 6;
-const INNER_RADIUS: f64 = 1.0;
+const INNER_RADIUS: f64 = 5.715;
 const INNER_ANGLE_OFFSET: f64 = 0.0;
 
 pub const OUTER_COUNT: u16 = 12;
-const OUTER_RADIUS: f64 = 2.0;
+const OUTER_RADIUS: f64 = 11.041;
 const OUTER_ANGLE_OFFSET: f64 = 0.0;
 
 #[allow(dead_code)]

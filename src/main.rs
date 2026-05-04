@@ -1,8 +1,12 @@
+use std::path::PathBuf;
+
+use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
+use clap::Parser;
 use figment::Figment;
 use figment::providers::Env;
 use figment::providers::Format;
@@ -20,6 +24,7 @@ use crate::driver::Driver;
 use crate::driver::Stop;
 use crate::driver::Zero;
 use crate::i2c::Bus;
+use crate::topology::BulbSlot;
 
 mod bulb;
 mod config;
@@ -59,14 +64,27 @@ impl IntoResponse for Error {
     }
 }
 
+#[derive(Parser)]
+struct Args {
+    /// The path to the config file to use.
+    #[clap(long, short)]
+    #[clap(default_value = "brandelier.toml")]
+    config: PathBuf,
+}
+
 #[derive(Clone)]
 struct AppState {
     driver: ActorRef<Driver>,
+    config: Config,
 }
 
-async fn index(State(AppState { driver }): State<AppState>) -> Result<()> {
-    driver.ask(Zero).await?;
+async fn index(State(AppState { config, .. }): State<AppState>) -> Result<()> {
+    println!("{config:#?}");
     Ok(())
+}
+
+async fn get_topology(State(AppState { config, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
+    Json(topology::bulbs(&config.topology))
 }
 
 #[tokio::main]
@@ -76,8 +94,11 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let config: Config = Figment::from(Serialized::defaults(Config::default()))
-        .merge(Toml::file("brandelier.toml"))
+    let args = Args::parse();
+
+    let config: Config = Figment::new()
+        .merge(Serialized::defaults(Config::default()))
+        .merge(Toml::file(args.config))
         .merge(Env::prefixed("BRANDELIER__").split("__"))
         .extract()
         .expect("Serialized defaults are always available");
@@ -90,11 +111,19 @@ async fn main() -> Result<()> {
     let i2c = i2c::MockBus::new();
 
     let bus = Bus::spawn(Bus::new(Box::new(i2c), &config.i2c));
-    let driver = Driver::spawn(Driver::new(bus, config.driver, config.topology));
-    let state = AppState { driver };
+    let driver = Driver::spawn(Driver::new(
+        bus,
+        config.driver.clone(),
+        config.topology.clone(),
+    ));
+    let state = AppState {
+        driver,
+        config: config.clone(),
+    };
 
     let router = Router::new()
         .route("/", get(index))
+        .route("/api/topology", get(get_topology))
         .with_state(state)
         .fallback_service(ServeDir::new(&config.server.static_dir));
     let listener = TcpListener::bind((config.server.host, config.server.port)).await?;

@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub server: Server,
@@ -17,7 +17,7 @@ pub struct Config {
     pub topology: Topology,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Server {
     pub host: Ipv4Addr,
     pub port: u16,
