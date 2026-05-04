@@ -21,7 +21,6 @@ pub struct Config {
 pub struct Server {
     pub host: Ipv4Addr,
     pub port: u16,
-    pub static_dir: String,
 }
 
 impl Default for Server {
@@ -29,7 +28,6 @@ impl Default for Server {
         Self {
             host: Ipv4Addr::UNSPECIFIED,
             port: 5001,
-            static_dir: "static".into(),
         }
     }
 }

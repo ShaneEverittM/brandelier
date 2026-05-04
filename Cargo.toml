@@ -16,7 +16,8 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ordered-float = { version = "5.1.0", features = ["serde"] }
 axum = { version = "0.8.8", features = ["json"] }
 tokio-util = "0.7.18"
-tower-http = { version = "0.6.8", features = ["fs"] }
 i2cdev = "0.6.2"
 figment = { version = "0.10.19", features = ["toml", "env"] }
 serde = { version = "1.0.228", features = ["derive"] }
+rust-embed = "8.7.2"
+mime_guess = "2.0.5"

@@ -5,7 +5,10 @@ use axum::Json;
 use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::http::Uri;
+use axum::http::header;
 use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use clap::Parser;
@@ -15,9 +18,9 @@ use figment::providers::Format;
 use figment::providers::Serialized;
 use figment::providers::Toml;
 use kameo::prelude::*;
+use rust_embed::Embed;
 use tokio::io;
 use tokio::net::TcpListener;
-use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
@@ -86,7 +89,8 @@ struct AppState {
     config: Config,
 }
 
-async fn index(State(AppState { config, .. }): State<AppState>) -> Result<()> {
+/// Debug endpoint — dumps the loaded config to the server's stdout.
+async fn debug_config(State(AppState { config, .. }): State<AppState>) -> Result<()> {
     println!("{config:#?}");
     Ok(())
 }
@@ -101,6 +105,38 @@ async fn set_bulbs(
 ) -> Result<()> {
     driver.ask(SetAll { bulbs }).await?;
     Ok(())
+}
+
+/// Static UI assets bundled at compile time.
+///
+/// In release builds these are baked into the binary (single artifact for
+/// scp'ing to the Pi). In debug builds rust-embed reads from disk on each
+/// request, so editing `ui/dist/` while the dev binary is running picks up
+/// changes without a rebuild — though normally you'll be running Vite on
+/// :5173 and proxying `/api` to this server during development.
+///
+/// `ui/dist/` must exist at compile time; produce it with `bun run build`
+/// (or symlink it to a placeholder for early dev).
+#[derive(Embed)]
+#[folder = "ui/dist/"]
+struct Assets;
+
+async fn serve_static(uri: Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let path = if path.is_empty() { "index.html" } else { path };
+
+    if let Some(file) = Assets::get(path) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return ([(header::CONTENT_TYPE, mime.as_ref())], file.data).into_response();
+    }
+
+    // Unknown path → fall through to index.html so client-side routing works.
+    match Assets::get("index.html") {
+        Some(file) => {
+            ([(header::CONTENT_TYPE, "text/html")], file.data).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[tokio::main]
@@ -138,11 +174,11 @@ async fn main() -> Result<()> {
     };
 
     let router = Router::new()
-        .route("/", get(index))
+        .route("/api/debug/config", get(debug_config))
         .route("/api/topology", get(get_topology))
         .route("/api/bulbs", post(set_bulbs))
         .with_state(state)
-        .fallback_service(ServeDir::new(&config.server.static_dir));
+        .fallback(serve_static);
     let listener = TcpListener::bind((config.server.host, config.server.port)).await?;
 
     axum::serve(listener, router).await?;
