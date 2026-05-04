@@ -17,6 +17,8 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use serde::Deserialize;
+
 use crate::bulb;
 use crate::bulb::Bulb;
 use crate::bulb::Command;
@@ -24,6 +26,12 @@ use crate::config;
 use crate::i2c;
 use crate::topology;
 use crate::topology::BulbId;
+
+/// Mapping from a normalized [0, 1] cord-drop ratio to physical extension (cm)
+/// and from normalized [0, 1] brightness to the 0..255 byte the firmware
+/// expects.
+const MAX_EXTENSION: f64 = 65.0;
+const MAX_BRIGHTNESS: f64 = 255.0;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -212,6 +220,43 @@ impl Message<Cycle> for Driver {
         let cycle = task::spawn(state.cycle(token.clone()));
         self.mode = Mode::Cycling { token, cycle };
 
+        Ok(())
+    }
+}
+
+/// Per-bulb desired state. `pos` and `bright` are normalized [0, 1].
+#[derive(Debug, Deserialize)]
+pub struct BulbCommand {
+    pub pos: f64,
+    pub bright: f64,
+}
+
+/// Assert the desired state of every bulb in one batch. Cancels any running
+/// cycle and stays idle afterward. Bulb IDs not present in the driver's
+/// active set (e.g. disabled) are silently skipped.
+pub struct SetAll {
+    pub bulbs: HashMap<BulbId, BulbCommand>,
+}
+
+impl Message<SetAll> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, msg: SetAll, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for (id, cmd) in msg.bulbs {
+            let Some(bulb) = state.bulbs.get_mut(&id) else {
+                continue;
+            };
+            let extension = cmd.pos.clamp(0.0, 1.0) * MAX_EXTENSION;
+            let brightness = cmd.bright.clamp(0.0, 1.0) * MAX_BRIGHTNESS;
+            bulb.write(Command::SetBrightness {
+                extension,
+                brightness,
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        self.notify_waiters(Ok(()));
         Ok(())
     }
 }

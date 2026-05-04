@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use axum::Json;
@@ -6,6 +7,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
+use axum::routing::post;
 use clap::Parser;
 use figment::Figment;
 use figment::providers::Env;
@@ -19,11 +21,14 @@ use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
+use crate::driver::BulbCommand;
 use crate::driver::Cycle;
 use crate::driver::Driver;
+use crate::driver::SetAll;
 use crate::driver::Stop;
 use crate::driver::Zero;
 use crate::i2c::Bus;
+use crate::topology::BulbId;
 use crate::topology::BulbSlot;
 
 mod bulb;
@@ -53,6 +58,9 @@ pub enum Error {
 
     #[error(transparent)]
     CycleError(#[from] SendError<Cycle, driver::Error>),
+
+    #[error(transparent)]
+    SetAllError(#[from] SendError<SetAll, driver::Error>),
 
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -85,6 +93,14 @@ async fn index(State(AppState { config, .. }): State<AppState>) -> Result<()> {
 
 async fn get_topology(State(AppState { config, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
     Json(topology::bulbs(&config.topology))
+}
+
+async fn set_bulbs(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(bulbs): Json<HashMap<BulbId, BulbCommand>>,
+) -> Result<()> {
+    driver.ask(SetAll { bulbs }).await?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -124,6 +140,7 @@ async fn main() -> Result<()> {
     let router = Router::new()
         .route("/", get(index))
         .route("/api/topology", get(get_topology))
+        .route("/api/bulbs", post(set_bulbs))
         .with_state(state)
         .fallback_service(ServeDir::new(&config.server.static_dir));
     let listener = TcpListener::bind((config.server.host, config.server.port)).await?;
