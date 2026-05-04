@@ -12,18 +12,13 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use clap::Parser;
-use figment::Figment;
-use figment::providers::Env;
-use figment::providers::Format;
-use figment::providers::Serialized;
-use figment::providers::Toml;
 use kameo::prelude::*;
 use rust_embed::Embed;
 use tokio::io;
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
+use validator::ValidationErrors;
 
-use crate::config::Config;
 use crate::driver::BulbCommand;
 use crate::driver::Cycle;
 use crate::driver::Driver;
@@ -48,7 +43,7 @@ pub enum Error {
     Config(#[from] Box<figment::Error>),
 
     #[error("Invalid configuration: {0}")]
-    InvalidConfig(String),
+    InvalidConfig(#[from] ValidationErrors),
 
     #[error(transparent)]
     Driver(#[from] driver::Error),
@@ -70,7 +65,7 @@ pub enum Error {
 }
 
 impl IntoResponse for Error {
-    fn into_response(self) -> axum::response::Response {
+    fn into_response(self) -> Response {
         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
     }
 }
@@ -86,20 +81,14 @@ struct Args {
 #[derive(Clone)]
 struct AppState {
     driver: ActorRef<Driver>,
-    config: Config,
+    topology: config::Topology,
 }
 
-/// Debug endpoint — dumps the loaded config to the server's stdout.
-async fn debug_config(State(AppState { config, .. }): State<AppState>) -> Result<()> {
-    println!("{config:#?}");
-    Ok(())
+async fn topology(State(AppState { topology, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
+    Json(topology::bulbs(&topology))
 }
 
-async fn get_topology(State(AppState { config, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
-    Json(topology::bulbs(&config.topology))
-}
-
-async fn set_bulbs(
+async fn bulbs(
     State(AppState { driver, .. }): State<AppState>,
     Json(bulbs): Json<HashMap<BulbId, BulbCommand>>,
 ) -> Result<()> {
@@ -121,64 +110,58 @@ async fn set_bulbs(
 #[folder = "ui/dist/"]
 struct Assets;
 
-async fn serve_static(uri: Uri) -> Response {
+/// Get bundled SPA assets.
+async fn assets(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
 
     if let Some(file) = Assets::get(path) {
-        let mime = mime_guess::from_path(path).first_or_octet_stream();
-        return ([(header::CONTENT_TYPE, mime.as_ref())], file.data).into_response();
+        return match mime_guess::from_path(path).first() {
+            None => file.data.into_response(),
+            Some(mime) => ([(header::CONTENT_TYPE, mime.as_ref())], file.data).into_response(),
+        };
     }
 
     // Unknown path → fall through to index.html so client-side routing works.
     match Assets::get("index.html") {
-        Some(file) => {
-            ([(header::CONTENT_TYPE, "text/html")], file.data).into_response()
-        }
+        Some(file) => ([(header::CONTENT_TYPE, "text/html")], file.data).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn init_tracing() {
     tracing_subscriber::fmt::fmt()
         .pretty()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    init_tracing();
 
     let args = Args::parse();
 
-    let config: Config = Figment::new()
-        .merge(Serialized::defaults(Config::default()))
-        .merge(Toml::file(args.config))
-        .merge(Env::prefixed("BRANDELIER__").split("__"))
-        .extract()
-        .expect("Serialized defaults are always available");
+    let config = config::load(&args.config)?;
 
-    config.topology.validate().map_err(Error::InvalidConfig)?;
+    let bus = Bus::spawn(Bus::autodetect(&config.i2c));
+    let driver = Driver::spawn(Driver::new(&bus, &config.driver, &config.topology));
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    let i2c = i2c::LinuxBus::new(&config.i2c.device_path)?;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    let i2c = i2c::MockBus::new();
-
-    let bus = Bus::spawn(Bus::new(Box::new(i2c), &config.i2c));
-    let driver = Driver::spawn(Driver::new(
-        bus,
-        config.driver.clone(),
-        config.topology.clone(),
-    ));
     let state = AppState {
         driver,
-        config: config.clone(),
+        topology: config.topology,
     };
 
+    let api = Router::new()
+        .route("/topology", get(topology))
+        .route("/bulbs", post(bulbs))
+        .fallback(|| async { StatusCode::NOT_FOUND });
+
     let router = Router::new()
-        .route("/api/debug/config", get(debug_config))
-        .route("/api/topology", get(get_topology))
-        .route("/api/bulbs", post(set_bulbs))
-        .with_state(state)
-        .fallback(serve_static);
+        .nest("/api", api)
+        .fallback(assets)
+        .with_state(state);
+
     let listener = TcpListener::bind((config.server.host, config.server.port)).await?;
 
     axum::serve(listener, router).await?;

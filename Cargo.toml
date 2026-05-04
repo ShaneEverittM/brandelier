@@ -21,3 +21,4 @@ figment = { version = "0.10.19", features = ["toml", "env"] }
 serde = { version = "1.0.228", features = ["derive"] }
 rust-embed = "8.7.2"
 mime_guess = "2.0.5"
+validator = { version = "0.20.0", features = ["derive"] }

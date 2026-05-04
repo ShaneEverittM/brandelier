@@ -7,6 +7,7 @@ use kameo::mailbox::Signal;
 use kameo::prelude::*;
 use kameo::reply::DelegatedReply;
 use kameo::reply::ReplySender;
+use serde::Deserialize;
 use tokio::select;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -16,8 +17,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-use serde::Deserialize;
 
 use crate::bulb;
 use crate::bulb::Bulb;
@@ -302,16 +301,16 @@ impl Message<WaitForIdle> for Driver {
 
 impl Driver {
     pub fn new(
-        bus: ActorRef<i2c::Bus>,
-        config: config::Driver,
-        topology: config::Topology,
+        bus: &ActorRef<i2c::Bus>,
+        config: &config::Driver,
+        topology: &config::Topology,
     ) -> Self {
         Self {
             mode: Mode::Uninitialized,
             waiters: Vec::new(),
-            bus,
-            config,
-            topology,
+            bus: bus.clone(),
+            config: config.clone(),
+            topology: topology.clone(),
         }
     }
 
