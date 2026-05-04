@@ -22,7 +22,8 @@ use crate::bulb::Bulb;
 use crate::bulb::Command;
 use crate::config;
 use crate::i2c;
-use crate::i2c::Position;
+use crate::topology;
+use crate::topology::BulbId;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -42,7 +43,7 @@ pub enum Error {
 }
 
 pub struct State {
-    bulbs: HashMap<Position, Bulb>,
+    bulbs: HashMap<BulbId, Bulb>,
     zero_timeout: Duration,
     refresh_interval: Duration,
 }
@@ -58,7 +59,8 @@ impl State {
                 let now = Instant::now();
                 let t = (now - start_t).as_secs_f64();
 
-                for (position, bulb) in &mut self.bulbs {
+                for bulb in self.bulbs.values_mut() {
+                    let position = bulb.position();
                     let extension = (3.0 * (0.25 * *position.x + 0.25 * t).sin()) + 4.0;
                     let brightness = (16.0 * (0.25 * *position.x + 0.25 * t).sin()) + 20.0;
                     bulb.write(Command::SetBrightness {
@@ -139,7 +141,7 @@ pub struct Driver {
     waiters: Vec<ReplySender<Result<()>>>,
     bus: ActorRef<i2c::Bus>,
     config: config::Driver,
-    i2c_config: config::I2c,
+    topology: config::Topology,
 }
 
 impl Actor for Driver {
@@ -254,20 +256,31 @@ impl Message<WaitForIdle> for Driver {
 }
 
 impl Driver {
-    pub fn new(bus: ActorRef<i2c::Bus>, config: config::Driver, i2c_config: config::I2c) -> Self {
+    pub fn new(
+        bus: ActorRef<i2c::Bus>,
+        config: config::Driver,
+        topology: config::Topology,
+    ) -> Self {
         Self {
             mode: Mode::Uninitialized,
             waiters: Vec::new(),
             bus,
             config,
-            i2c_config,
+            topology,
         }
     }
 
     fn initialize(&self) -> State {
         let tolerance = self.config.extension_tolerance;
-        let bulbs = i2c::get_addresses(&self.i2c_config)
-            .map(|(pos, addr)| (pos, Bulb::new(self.bus.clone(), addr, tolerance)))
+        let bulbs = topology::bulbs(&self.topology)
+            .into_iter()
+            .filter(|slot| !slot.disabled)
+            .map(|slot| {
+                (
+                    slot.id,
+                    Bulb::new(self.bus.clone(), slot.address, slot.position, tolerance),
+                )
+            })
             .collect();
 
         State {

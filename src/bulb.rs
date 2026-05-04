@@ -10,6 +10,7 @@ use tracing::warn;
 
 use crate::i2c;
 use crate::i2c::Bus;
+use crate::i2c::Position;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -141,6 +142,7 @@ impl Response {
 pub struct Bulb {
     bus: ActorRef<Bus>,
     address: u16,
+    position: Position,
     real_extension: f64,
     real_speed: f64,
     max_speed: f64,
@@ -154,10 +156,16 @@ pub struct Bulb {
 }
 
 impl Bulb {
-    pub fn new(bus: ActorRef<Bus>, address: u16, extension_tolerance: f64) -> Self {
+    pub fn new(
+        bus: ActorRef<Bus>,
+        address: u16,
+        position: Position,
+        extension_tolerance: f64,
+    ) -> Self {
         Self {
             bus,
             address,
+            position,
             real_extension: 0.0,
             real_speed: 0.0,
             max_speed: 1.0, // this needs to get updated whenever SetMaxExtension is run
@@ -168,6 +176,10 @@ impl Bulb {
             extension_tolerance,
             last_requested_extension: 0.0,
         }
+    }
+
+    pub fn position(&self) -> Position {
+        self.position
     }
 
     pub async fn write(&mut self, command: Command) -> Result<()> {

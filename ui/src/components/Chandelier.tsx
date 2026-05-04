@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
+import { BULBS } from '../topology';
 import type {
   Bulb,
   BulbId,
@@ -16,30 +17,6 @@ import type {
 } from '../types';
 
 const TAU = Math.PI * 2;
-
-function buildBulbLayout(): Bulb[] {
-  const bulbs: Bulb[] = [];
-  bulbs.push({ id: 'c', ring: 0, ringIndex: 0, x3: 0, z3: 0 });
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * TAU + Math.PI / 6;
-    bulbs.push({
-      id: `r1-${i}`, ring: 1, ringIndex: i,
-      x3: Math.cos(a),
-      z3: Math.sin(a),
-    });
-  }
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * TAU;
-    bulbs.push({
-      id: `r2-${i}`, ring: 2, ringIndex: i,
-      x3: Math.cos(a) * 2.0,
-      z3: Math.sin(a) * 2.0,
-    });
-  }
-  return bulbs;
-}
-
-export const BULBS = buildBulbLayout();
 
 const SVG_W = 920;
 const SVG_H = 620;

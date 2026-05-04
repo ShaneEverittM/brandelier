@@ -25,6 +25,7 @@ mod bulb;
 mod config;
 mod driver;
 mod i2c;
+mod topology;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -32,6 +33,9 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub enum Error {
     #[error(transparent)]
     Config(#[from] Box<figment::Error>),
+
+    #[error("Invalid configuration: {0}")]
+    InvalidConfig(String),
 
     #[error(transparent)]
     Driver(#[from] driver::Error),
@@ -78,13 +82,15 @@ async fn main() -> Result<()> {
         .extract()
         .expect("Serialized defaults are always available");
 
+    config.topology.validate().map_err(Error::InvalidConfig)?;
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let i2c = i2c::LinuxBus::new(&config.i2c.device_path)?;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let i2c = i2c::MockBus::new();
 
     let bus = Bus::spawn(Bus::new(Box::new(i2c), &config.i2c));
-    let driver = Driver::spawn(Driver::new(bus, config.driver, config.i2c));
+    let driver = Driver::spawn(Driver::new(bus, config.driver, config.topology));
     let state = AppState { driver };
 
     let router = Router::new()

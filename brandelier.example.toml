@@ -5,9 +5,6 @@ static_dir = "static"
 
 [i2c]
 device_path = "/dev/i2c-1"
-base_address = 8 # 0x08
-num_devices = 5
-device_spacing = 4.0
 retries = 3
 retry_delay_ms = 20
 rate_limit_ms = 40
@@ -16,3 +13,20 @@ rate_limit_ms = 40
 zero_timeout_secs = 60
 extension_tolerance = 1.0
 refresh_interval_secs = 1
+
+# Maps each logical bulb position to its i2c address.
+# `inner` is indexed by ringIndex 0..6 (CCW from 0°),
+# `outer` is indexed by ringIndex 0..12 (CCW from 0°).
+# Use 0xFF for any position that isn't physically wired up yet — the driver
+# skips it. Real addresses must be in the legal 7-bit slave range 0x08..=0x77.
+# This is the correct topology, with nothing disabled.
+#[topology]
+#center = 0x08
+#inner  = [0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E]
+#outer  = [0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A]
+
+# Current build state: only the first 5 outer-ring bulbs are wired up.
+[topology]
+center = 0xFF
+inner  = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]
+outer  = [0x08, 0x09, 0x0A, 0x0B, 0x0C, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]

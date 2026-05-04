@@ -1,11 +1,12 @@
 /* Brandelier — main app */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BULBS, Chandelier } from './components/Chandelier';
+import { Chandelier } from './components/Chandelier';
 import { CameraWidget } from './components/CameraWidget';
 import { Inspector } from './components/Inspector';
 import { WavePanel } from './components/WavePanel';
 import { GroupsPanel } from './components/GroupsPanel';
+import { BULBS } from './topology';
 import type {
   BulbId,
   BulbState,

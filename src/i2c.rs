@@ -233,17 +233,3 @@ pub struct Position {
     pub x: OrderedFloat<f64>,
     pub y: OrderedFloat<f64>,
 }
-
-pub fn get_addresses(config: &config::I2c) -> impl Iterator<Item = (Position, u16)> {
-    let base = config.base_address;
-    let spacing = config.device_spacing;
-    (0..config.num_devices).map(move |i| {
-        (
-            Position {
-                x: OrderedFloat(i as f64 * spacing),
-                y: OrderedFloat(0.0),
-            },
-            base + i,
-        )
-    })
-}
