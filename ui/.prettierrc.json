@@ -5,5 +5,8 @@
   "printWidth": 100,
   "tabWidth": 2,
   "arrowParens": "always",
-  "bracketSpacing": true
+  "bracketSpacing": true,
+  "plugins": ["@ianvs/prettier-plugin-sort-imports"],
+  "importOrder": ["<BUILTIN_MODULES>", "", "<THIRD_PARTY_MODULES>", "", "^[./]"],
+  "importOrderTypeScriptVersion": "5.0.0"
 }

@@ -3,8 +3,8 @@
    Camera: yaw (rotate around Y) + elevation (tilt). Front view is yaw=0,elev=12°.
 */
 
-import { useEffect, useRef, useState } from 'react';
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+
 import { BULBS } from '../topology';
 import type { Bulb, BulbId, BulbState, Camera, DragAxis, DragDelta, RenderStyle } from '../types';
 

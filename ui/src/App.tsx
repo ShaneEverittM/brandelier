@@ -1,11 +1,12 @@
 /* Brandelier — main app */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Chandelier } from './components/Chandelier';
+
 import { CameraWidget } from './components/CameraWidget';
+import { Chandelier } from './components/Chandelier';
+import { GroupsPanel } from './components/GroupsPanel';
 import { Inspector } from './components/Inspector';
 import { WavePanel } from './components/WavePanel';
-import { GroupsPanel } from './components/GroupsPanel';
 import { useOrbitDrag } from './hooks/useOrbitDrag.ts';
 import { BULBS } from './topology';
 import type { BulbId, BulbState, Camera, DragDelta, Group, Mode, RenderStyle, Wave } from './types';
@@ -138,7 +139,6 @@ function App() {
     const moved = dragSnapshotRef.current !== null;
     dragSnapshotRef.current = null;
     if (!moved) return;
-    console.table(bulbStateRef.current);
     void fetch('/api/bulbs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

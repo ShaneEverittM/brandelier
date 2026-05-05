@@ -1,6 +1,6 @@
 /* Camera widget — small orbital control in the stage corner */
 
-import type { MouseEvent as ReactMouseEvent } from 'react';
+import { useOrbitDrag } from '../hooks/useOrbitDrag';
 import type { Camera } from '../types';
 
 type Props = {
@@ -9,33 +9,14 @@ type Props = {
 };
 
 export function CameraWidget({ camera, setCamera }: Props) {
-  const startDrag = (e: ReactMouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    const startX = e.clientX,
-      startY = e.clientY;
-    const start = { ...camera };
-    const onMove = (ev: MouseEvent) => {
-      const dx = ev.clientX - startX;
-      const dy = ev.clientY - startY;
-      setCamera({
-        yaw: start.yaw + dx * 0.012,
-        elevation: Math.max(-1.0, Math.min(1.4, start.elevation + dy * 0.008)),
-      });
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
+  const startDrag = useOrbitDrag(camera, setCamera);
 
-  // Visualize current camera as a small sphere with a dot
+  // Visualize current camera as a small sphere with a dot.
   const r = 26;
-  const cx = 32,
-    cy = 32;
-  // Yaw moves dot around horizontally; elevation moves it vertically
+  const cx = 32;
+  const cy = 32;
+
+  // Yaw moves dot around horizontally; elevation moves it vertically.
   const dotX = cx + Math.sin(-camera.yaw) * r * 0.7;
   const dotY = cy + (camera.elevation - 0.5) * r * 1.1;
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+
 import type { Wave, WavePattern } from '../types';
 
 const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
