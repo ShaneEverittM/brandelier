@@ -6,15 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { BULBS } from '../topology';
-import type {
-  Bulb,
-  BulbId,
-  BulbState,
-  Camera,
-  DragAxis,
-  DragDelta,
-  RenderStyle,
-} from '../types';
+import type { Bulb, BulbId, BulbState, Camera, DragAxis, DragDelta, RenderStyle } from '../types';
 
 const TAU = Math.PI * 2;
 
@@ -35,11 +27,13 @@ type Projected = { x: number; y: number; z: number; scale: number };
 // 3D point projection: rotate by yaw around Y, tilt by elevation, then perspective
 function project(x: number, y: number, z: number, yaw: number, elevation: number): Projected {
   // yaw rotates around Y axis (top-down spin)
-  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  const cy = Math.cos(yaw),
+    sy = Math.sin(yaw);
   const x1 = x * cy - z * sy;
   const z1 = x * sy + z * cy;
   // elevation rotates around X axis (tilt camera up/down)
-  const ce = Math.cos(elevation), se = Math.sin(elevation);
+  const ce = Math.cos(elevation),
+    se = Math.sin(elevation);
   const y2 = y * ce - z1 * se;
   const z2 = y * se + z1 * ce;
   // perspective
@@ -67,7 +61,10 @@ function platePath(yaw: number, elevation: number): Projected[] {
 
 // Plate as solid filled with depth shading: build outer + inner offset for thickness
 function platePathString(pts: Projected[]): string {
-  return pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') + ' Z';
+  return (
+    pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ') +
+    ' Z'
+  );
 }
 
 type DragState = {
@@ -116,7 +113,14 @@ export function Chandelier({
       longPressRef.current = null;
     }, 700);
 
-    setDrag({ id: bulb.id, startX: e.clientX, startY: e.clientY, axis: null, lastX: e.clientX, lastY: e.clientY });
+    setDrag({
+      id: bulb.id,
+      startX: e.clientX,
+      startY: e.clientY,
+      axis: null,
+      lastX: e.clientX,
+      lastY: e.clientY,
+    });
   };
 
   const handleTopHoleDown = (e: ReactMouseEvent, bulb: Bulb) => {
@@ -209,12 +213,7 @@ export function Chandelier({
         </defs>
 
         {/* Ceiling plate disc */}
-        <path
-          d={plateStr}
-          fill="url(#plate-grad)"
-          stroke="var(--rule)"
-          strokeWidth="0.75"
-        />
+        <path d={plateStr} fill="url(#plate-grad)" stroke="var(--rule)" strokeWidth="0.75" />
 
         {/* Top-plate holes (sorted back-to-front) */}
         {[...projected]
@@ -244,11 +243,7 @@ export function Chandelier({
           const r = BULB_R_BASE * bot.scale;
 
           return (
-            <g
-              key={bulb.id}
-              className="bulb-row"
-              onMouseDown={(e) => handleBulbDown(e, bulb)}
-            >
+            <g key={bulb.id} className="bulb-row" onMouseDown={(e) => handleBulbDown(e, bulb)}>
               {/* Cord */}
               <line
                 x1={top.x}
@@ -290,7 +285,7 @@ export function Chandelier({
                   cy={bot.y}
                   r={r}
                   fill="var(--paper)"
-                  stroke={isSel ? 'var(--select)' : (isOn ? 'var(--accent-deep)' : 'var(--ink-3)')}
+                  stroke={isSel ? 'var(--select)' : isOn ? 'var(--accent-deep)' : 'var(--ink-3)'}
                   strokeWidth={isSel ? 2 : 1}
                 />
               ) : (
@@ -342,4 +337,3 @@ export function Chandelier({
     </div>
   );
 }
-

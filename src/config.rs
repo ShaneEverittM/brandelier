@@ -306,7 +306,7 @@ pub fn load(path: &Path) -> crate::Result<Config> {
         .extract()
         .expect("Serialized defaults are always available");
 
-    // Sadly no pydantic-style post-validator in Rust.
+    // Sadly, no pydantic-style post-validator in Rust.
     config.validate()?;
 
     if enabled!(CONFIG_LEVEL) {

@@ -1,32 +1,32 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Brandelier — Console</title>
-  <template id="__bundler_thumbnail">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="background:#F6F3EC">
-      <ellipse cx="50" cy="32" rx="22" ry="3" fill="#1A1814" opacity="0.2" />
-      <line x1="38" y1="33" x2="38" y2="55" stroke="#1A1814" stroke-width="0.5" />
-      <line x1="50" y1="33" x2="50" y2="62" stroke="#1A1814" stroke-width="0.5" />
-      <line x1="62" y1="33" x2="62" y2="55" stroke="#1A1814" stroke-width="0.5" />
-      <circle cx="38" cy="60" r="5" fill="#E0DCD0" stroke="#1A1814" stroke-width="0.5" />
-      <circle cx="50" cy="68" r="5" fill="oklch(0.78 0.12 75)" />
-      <circle cx="62" cy="60" r="5" fill="#E0DCD0" stroke="#1A1814" stroke-width="0.5" />
-    </svg>
-  </template>
-</head>
-<body>
-  <div id="root"></div>
-  <script>
-    // Suppress benign ResizeObserver loop warnings that surface as errors
-    window.addEventListener('error', (e) => {
-      if (e.message && e.message.includes('ResizeObserver loop')) {
-        e.stopImmediatePropagation();
-        e.preventDefault();
-      }
-    });
-  </script>
-  <script type="module" src="/src/main.tsx"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Brandelier — Console</title>
+    <template id="__bundler_thumbnail">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="background: #f6f3ec">
+        <ellipse cx="50" cy="32" rx="22" ry="3" fill="#1A1814" opacity="0.2" />
+        <line x1="38" y1="33" x2="38" y2="55" stroke="#1A1814" stroke-width="0.5" />
+        <line x1="50" y1="33" x2="50" y2="62" stroke="#1A1814" stroke-width="0.5" />
+        <line x1="62" y1="33" x2="62" y2="55" stroke="#1A1814" stroke-width="0.5" />
+        <circle cx="38" cy="60" r="5" fill="#E0DCD0" stroke="#1A1814" stroke-width="0.5" />
+        <circle cx="50" cy="68" r="5" fill="oklch(0.78 0.12 75)" />
+        <circle cx="62" cy="60" r="5" fill="#E0DCD0" stroke="#1A1814" stroke-width="0.5" />
+      </svg>
+    </template>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Suppress benign ResizeObserver loop warnings that surface as errors
+      window.addEventListener('error', (e) => {
+        if (e.message && e.message.includes('ResizeObserver loop')) {
+          e.stopImmediatePropagation();
+          e.preventDefault();
+        }
+      });
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

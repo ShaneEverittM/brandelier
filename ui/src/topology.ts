@@ -21,9 +21,7 @@ const OUTER_ANGLE_OFFSET = 0;
 export const TOTAL_BULBS = 1 + INNER_COUNT + OUTER_COUNT;
 
 function buildBulbLayout(): Bulb[] {
-  const bulbs: Bulb[] = [
-    { id: 'c', ring: 0, ringIndex: 0, x3: 0, z3: 0 },
-  ];
+  const bulbs: Bulb[] = [{ id: 'c', ring: 0, ringIndex: 0, x3: 0, z3: 0 }];
   for (let i = 0; i < INNER_COUNT; i++) {
     const a = (i / INNER_COUNT) * TAU + INNER_ANGLE_OFFSET;
     bulbs.push({
