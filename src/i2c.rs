@@ -130,6 +130,15 @@ pub struct Bus {
 }
 
 impl Bus {
+    pub fn autodetect(config: &config::I2c) -> Self {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let i2c_impl = LinuxBus::new(&config.i2c.device_path)?;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let i2c_impl = MockBus::new();
+
+        Self::new(Box::new(i2c_impl), config)
+    }
+
     pub fn new(bus: Box<dyn I2cBus>, config: &config::I2c) -> Self {
         Self {
             bus,
@@ -228,22 +237,8 @@ impl Message<Write> for Bus {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct Position {
     pub x: OrderedFloat<f64>,
     pub y: OrderedFloat<f64>,
-}
-
-pub fn get_addresses(config: &config::I2c) -> impl Iterator<Item = (Position, u16)> {
-    let base = config.base_address;
-    let spacing = config.device_spacing;
-    (0..config.num_devices).map(move |i| {
-        (
-            Position {
-                x: OrderedFloat(i as f64 * spacing),
-                y: OrderedFloat(0.0),
-            },
-            base + i,
-        )
-    })
 }

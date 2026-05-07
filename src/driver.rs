@@ -7,6 +7,7 @@ use kameo::mailbox::Signal;
 use kameo::prelude::*;
 use kameo::reply::DelegatedReply;
 use kameo::reply::ReplySender;
+use serde::Deserialize;
 use tokio::select;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -22,7 +23,14 @@ use crate::bulb::Bulb;
 use crate::bulb::Command;
 use crate::config;
 use crate::i2c;
-use crate::i2c::Position;
+use crate::topology;
+use crate::topology::BulbId;
+
+/// Mapping from a normalized [0, 1] cord-drop ratio to physical extension (cm)
+/// and from normalized [0, 1] brightness to the 0..255 byte the firmware
+/// expects.
+const MAX_EXTENSION: f64 = 65.0;
+const MAX_BRIGHTNESS: f64 = 255.0;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -42,7 +50,7 @@ pub enum Error {
 }
 
 pub struct State {
-    bulbs: HashMap<Position, Bulb>,
+    bulbs: HashMap<BulbId, Bulb>,
     zero_timeout: Duration,
     refresh_interval: Duration,
 }
@@ -58,7 +66,8 @@ impl State {
                 let now = Instant::now();
                 let t = (now - start_t).as_secs_f64();
 
-                for (position, bulb) in &mut self.bulbs {
+                for bulb in self.bulbs.values_mut() {
+                    let position = bulb.position();
                     let extension = (3.0 * (0.25 * *position.x + 0.25 * t).sin()) + 4.0;
                     let brightness = (16.0 * (0.25 * *position.x + 0.25 * t).sin()) + 20.0;
                     bulb.write(Command::SetBrightness {
@@ -139,7 +148,7 @@ pub struct Driver {
     waiters: Vec<ReplySender<Result<()>>>,
     bus: ActorRef<i2c::Bus>,
     config: config::Driver,
-    i2c_config: config::I2c,
+    topology: config::Topology,
 }
 
 impl Actor for Driver {
@@ -214,6 +223,43 @@ impl Message<Cycle> for Driver {
     }
 }
 
+/// Per-bulb desired state. `pos` and `bright` are normalized [0, 1].
+#[derive(Debug, Deserialize)]
+pub struct BulbCommand {
+    pub pos: f64,
+    pub bright: f64,
+}
+
+/// Assert the desired state of every bulb in one batch. Cancels any running
+/// cycle and stays idle afterward. Bulb IDs not present in the driver's
+/// active set (e.g. disabled) are silently skipped.
+pub struct SetAll {
+    pub bulbs: HashMap<BulbId, BulbCommand>,
+}
+
+impl Message<SetAll> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, msg: SetAll, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for (id, cmd) in msg.bulbs {
+            let Some(bulb) = state.bulbs.get_mut(&id) else {
+                continue;
+            };
+            let extension = cmd.pos.clamp(0.0, 1.0) * MAX_EXTENSION;
+            let brightness = cmd.bright.clamp(0.0, 1.0) * MAX_BRIGHTNESS;
+            bulb.write(Command::SetBrightness {
+                extension,
+                brightness,
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        self.notify_waiters(Ok(()));
+        Ok(())
+    }
+}
+
 pub struct Stop;
 
 impl Message<Stop> for Driver {
@@ -254,20 +300,31 @@ impl Message<WaitForIdle> for Driver {
 }
 
 impl Driver {
-    pub fn new(bus: ActorRef<i2c::Bus>, config: config::Driver, i2c_config: config::I2c) -> Self {
+    pub fn new(
+        bus: &ActorRef<i2c::Bus>,
+        config: &config::Driver,
+        topology: &config::Topology,
+    ) -> Self {
         Self {
             mode: Mode::Uninitialized,
             waiters: Vec::new(),
-            bus,
-            config,
-            i2c_config,
+            bus: bus.clone(),
+            config: config.clone(),
+            topology: topology.clone(),
         }
     }
 
     fn initialize(&self) -> State {
         let tolerance = self.config.extension_tolerance;
-        let bulbs = i2c::get_addresses(&self.i2c_config)
-            .map(|(pos, addr)| (pos, Bulb::new(self.bus.clone(), addr, tolerance)))
+        let bulbs = topology::bulbs(&self.topology)
+            .into_iter()
+            .filter(|slot| !slot.disabled)
+            .map(|slot| {
+                (
+                    slot.id,
+                    Bulb::new(self.bus.clone(), slot.address, slot.position, tolerance),
+                )
+            })
             .collect();
 
         State {
