@@ -15,7 +15,7 @@ const INNER_RADIUS = 1.0;
 const INNER_ANGLE_OFFSET = 0;
 
 const OUTER_COUNT = 12;
-const OUTER_RADIUS = 2.0;
+const OUTER_RADIUS = 1.932;
 const OUTER_ANGLE_OFFSET = 0;
 
 export const TOTAL_BULBS = 1 + INNER_COUNT + OUTER_COUNT;
@@ -23,7 +23,7 @@ export const TOTAL_BULBS = 1 + INNER_COUNT + OUTER_COUNT;
 function buildBulbLayout(): Bulb[] {
   const bulbs: Bulb[] = [{ id: 'c', ring: 0, ringIndex: 0, x3: 0, z3: 0 }];
   for (let i = 0; i < INNER_COUNT; i++) {
-    const a = (i / INNER_COUNT) * TAU + INNER_ANGLE_OFFSET;
+    const a = -(i / INNER_COUNT) * TAU + INNER_ANGLE_OFFSET;
     bulbs.push({
       id: `r1-${i}`,
       ring: 1,
@@ -33,7 +33,7 @@ function buildBulbLayout(): Bulb[] {
     });
   }
   for (let i = 0; i < OUTER_COUNT; i++) {
-    const a = (i / OUTER_COUNT) * TAU + OUTER_ANGLE_OFFSET;
+    const a = -(i / OUTER_COUNT) * TAU + OUTER_ANGLE_OFFSET;
     bulbs.push({
       id: `r2-${i}`,
       ring: 2,
