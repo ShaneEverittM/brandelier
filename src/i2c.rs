@@ -130,13 +130,13 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn autodetect(config: &config::I2c) -> Self {
+    pub fn autodetect(config: &config::I2c) -> io::Result<Self> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let i2c_impl = LinuxBus::new(&config.i2c.device_path)?;
+        let i2c_impl = LinuxBus::new(&config.device_path)?;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let i2c_impl = MockBus::new();
 
-        Self::new(Box::new(i2c_impl), config)
+        Ok(Self::new(Box::new(i2c_impl), config))
     }
 
     pub fn new(bus: Box<dyn I2cBus>, config: &config::I2c) -> Self {

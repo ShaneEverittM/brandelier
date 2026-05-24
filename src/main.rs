@@ -144,7 +144,7 @@ async fn main() -> Result<()> {
 
     let config = config::load(&args.config)?;
 
-    let bus = Bus::spawn(Bus::autodetect(&config.i2c));
+    let bus = Bus::spawn(Bus::autodetect(&config.i2c)?);
     let driver = Driver::spawn(Driver::new(&bus, &config.driver, &config.topology));
 
     let state = AppState {
