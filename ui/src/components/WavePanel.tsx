@@ -15,19 +15,25 @@ const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
       </g>
     ),
   },
-  { id: 'breath', name: 'Breath', icon: <path d="M2 8 C 8 1, 14 1, 18 8 C 22 15, 28 15, 34 8" /> },
   {
-    id: 'chase',
-    name: 'Chase',
+    id: 'spin',
+    name: 'Spin',
     icon: (
-      <g>
-        <line x1="3" y1="8" x2="9" y2="8" />
-        <line x1="14" y1="8" x2="20" y2="8" />
-        <line x1="25" y1="8" x2="33" y2="8" />
+      <g fill="none">
+        <circle cx="18" cy="8" r="6" />
+        <path d="M24 8 C24 4.7 21.3 2 18 2" strokeLinecap="round" />
+        <path d="M15 1 L18 2 L16 5" fill="currentColor" stroke="none" />
       </g>
     ),
   },
 ];
+
+function formatPeriod(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return sec === 0 ? `${m}m` : `${m}m ${sec}s`;
+}
 
 type Props = {
   wave: Wave;
@@ -38,6 +44,8 @@ type Props = {
 };
 
 export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
+  const isSpin = wave.pattern === 'spin';
+
   return (
     <div className="wave">
       <div className="rail-h">
@@ -51,6 +59,7 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
             key={p.id}
             className="pattern"
             aria-pressed={wave.pattern === p.id}
+            disabled={isPlaying}
             onClick={() => onWave({ ...wave, pattern: p.id })}
           >
             <svg viewBox="0 0 36 16">{p.icon}</svg>
@@ -59,44 +68,85 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
         ))}
       </div>
 
-      <div className="row">
-        <label>Amplitude</label>
-        <span className="value">{Math.round(wave.amp * 100)}%</span>
-      </div>
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        value={wave.amp}
-        onChange={(e) => onWave({ ...wave, amp: parseFloat(e.target.value) })}
-      />
+      {isSpin ? (
+        <>
+          <div className="row">
+            <label>Rotation period</label>
+            <span className="value">{formatPeriod(wave.spinPeriod)}</span>
+          </div>
+          <input
+            type="range"
+            min="5"
+            max="3600"
+            step="1"
+            value={wave.spinPeriod}
+            disabled={isPlaying}
+            onChange={(e) => onWave({ ...wave, spinPeriod: parseInt(e.target.value) })}
+          />
+        </>
+      ) : (
+        <>
+          <div className="row">
+            <label>Amplitude</label>
+            <span className="value">{Math.round(wave.amp * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min="0.01"
+            max="1"
+            step="0.01"
+            value={wave.amp}
+            disabled={isPlaying}
+            onChange={(e) => onWave({ ...wave, amp: parseFloat(e.target.value) })}
+          />
 
-      <div className="row">
-        <label>Speed</label>
-        <span className="value">{wave.speed.toFixed(2)}×</span>
-      </div>
-      <input
-        type="range"
-        min="0.1"
-        max="3"
-        step="0.05"
-        value={wave.speed}
-        onChange={(e) => onWave({ ...wave, speed: parseFloat(e.target.value) })}
-      />
+          <div className="row">
+            <label>Speed</label>
+            <span className="value">{wave.speed.toFixed(2)}×</span>
+          </div>
+          <input
+            type="range"
+            min="0.01"
+            max="2"
+            step="0.01"
+            value={wave.speed}
+            disabled={isPlaying}
+            onChange={(e) => onWave({ ...wave, speed: parseFloat(e.target.value) })}
+          />
 
-      <div className="row">
-        <label>Phase spread</label>
-        <span className="value">{Math.round(wave.phase * 360)}°</span>
-      </div>
-      <input
-        type="range"
-        min="0"
-        max="1"
-        step="0.01"
-        value={wave.phase}
-        onChange={(e) => onWave({ ...wave, phase: parseFloat(e.target.value) })}
-      />
+          <div className="row">
+            <label>Wavelength</label>
+            <span className="value">{wave.wavelength.toFixed(1)}</span>
+          </div>
+          <input
+            type="range"
+            min="0.2"
+            max="10"
+            step="0.1"
+            value={wave.wavelength}
+            disabled={isPlaying}
+            onChange={(e) => onWave({ ...wave, wavelength: parseFloat(e.target.value) })}
+          />
+
+          {wave.pattern !== 'ripple' && (
+            <>
+              <div className="row">
+                <label>Direction</label>
+                <span className="value">{wave.direction}°</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="359"
+                step="1"
+                value={wave.direction}
+                disabled={isPlaying}
+                onChange={(e) => onWave({ ...wave, direction: parseInt(e.target.value) })}
+              />
+            </>
+          )}
+        </>
+      )}
 
       <div className="action-row" style={{ marginTop: 14 }}>
         {isPlaying ? (

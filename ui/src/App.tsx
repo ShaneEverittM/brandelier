@@ -70,7 +70,7 @@ function App() {
     }, 300);
     return () => clearTimeout(id);
   }, [maxLength]);
-  const [wave, setWave] = useState<Wave>({ pattern: 'sine', amp: 0.4, speed: 1.0, phase: 0.5 });
+  const [wave, setWave] = useState<Wave>({ pattern: 'sine', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30 });
   const [isPlaying, setIsPlaying] = useState(false);
   const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
   const [orbiting, setOrbiting] = useState(false);
@@ -305,43 +305,82 @@ function App() {
     waveStartRef.current = performance.now();
     const baseSnapshot = { ...bulbState };
     let raf = 0;
+    let lastPush = 0;
+    let waveController: AbortController | null = null;
+    // Per-ring ordered lists for spin interpolation (ring 0 excluded).
+    // BULBS is already in ringIndex order so no additional sorting is needed.
+    const targets0 = new Set(selection.size > 0 ? [...selection] : BULBS.map((b) => b.id));
+    const spinRings = new Map<number, string[]>();
+    BULBS.forEach((b) => {
+      if (b.ring === 0 || !targets0.has(b.id)) return;
+      const list = spinRings.get(b.ring) ?? [];
+      list.push(b.id);
+      spinRings.set(b.ring, list);
+    });
+
     const tick = () => {
-      const t = (performance.now() - waveStartRef.current) / 1000;
-      setBulbState((cur) => {
-        const next = { ...cur };
-        const targets = selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
+      const now = performance.now();
+      const t = (now - waveStartRef.current) / 1000;
+      const next = { ...bulbStateRef.current };
+      const targets = selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
+
+      if (wave.pattern === 'spin') {
+        const offset = ((t / wave.spinPeriod) % 1);
+        spinRings.forEach((ring) => {
+          const n = ring.length;
+          const shift = offset * n;
+          ring.forEach((id, i) => {
+            const src = (i + shift) % n;
+            const lo = Math.floor(src) % n;
+            const hi = (lo + 1) % n;
+            const frac = src % 1;
+            const blo = baseSnapshot[ring[lo]] ?? { pos: 0.5, bright: 0 };
+            const bhi = baseSnapshot[ring[hi]] ?? { pos: 0.5, bright: 0 };
+            next[id] = {
+              pos: blo.pos + frac * (bhi.pos - blo.pos),
+              bright: blo.bright + frac * (bhi.bright - blo.bright),
+            };
+          });
+        });
+      } else {
         targets.forEach((id) => {
           const b = BULBS.find((x) => x.id === id);
           if (!b) return;
           const base = baseSnapshot[id] || { pos: 0.5, bright: 0.7 };
+          const dir = (wave.direction * Math.PI) / 180;
+          const k = (2 * Math.PI) / wave.wavelength / 5;
           const phaseOffset =
             wave.pattern === 'ripple'
-              ? Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3) * wave.phase * 2
-              : b.x3 * wave.phase * 1.2;
-          const omega = 2 * Math.PI * wave.speed * 0.4;
-          let v = 0;
-          if (wave.pattern === 'sine' || wave.pattern === 'ripple') {
-            v = Math.sin(omega * t - phaseOffset);
-          } else if (wave.pattern === 'breath') {
-            v = (Math.sin(omega * t * 0.6) + 1) / 2 - 0.5;
-            v *= 2;
-          } else if (wave.pattern === 'chase') {
-            const pos = ((omega * t) / Math.PI / 2 - phaseOffset / Math.PI / 2) % 1;
-            v = Math.cos(pos * 2 * Math.PI);
-          }
+              ? Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3) * k
+              : (b.x3 * Math.cos(dir) + b.z3 * Math.sin(dir)) * k;
+          const omega = 2 * Math.PI * wave.speed * 0.04;
+          const v = Math.sin(omega * t - phaseOffset);
           const offset = v * wave.amp * 0.4;
           next[id] = {
             pos: Math.max(0, Math.min(1, base.pos + offset)),
             bright: base.bright,
           };
         });
-        return next;
-      });
+      }
+      setBulbState(next);
+      if (now - lastPush >= 1000 / 30) {
+        lastPush = now;
+        waveController?.abort();
+        waveController = new AbortController();
+        void fetch('/api/bulbs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(next),
+          signal: waveController.signal,
+        }).catch((err: Error) => {
+          if (err.name !== 'AbortError') console.error('Failed to push bulb state:', err);
+        });
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, wave, selection, bulbState]);
+  }, [isPlaying, wave]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard
   useEffect(() => {
@@ -610,15 +649,17 @@ function App() {
               )}
             </section>
 
-            <section className="rail-section">
-              <GroupsPanel
-                groups={groups}
-                activeGroup={activeGroup}
-                onActivate={activateGroup}
-                onCreate={createGroup}
-                currentSelectionCount={selection.size}
-              />
-            </section>
+            {mode !== 'wave' && (
+              <section className="rail-section">
+                <GroupsPanel
+                  groups={groups}
+                  activeGroup={activeGroup}
+                  onActivate={activateGroup}
+                  onCreate={createGroup}
+                  currentSelectionCount={selection.size}
+                />
+              </section>
+            )}
 
             {mode === 'presets' && (
               <section className="rail-section">

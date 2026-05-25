@@ -393,11 +393,16 @@ body {
   background: var(--ink);
   border: 2px solid var(--paper);
   cursor: pointer;
+  transition: background 0.15s;
+}
+.wave input[type='range']:disabled::-webkit-slider-thumb {
+  background: var(--ink-3);
+  cursor: default;
 }
 
 .pattern-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   margin-bottom: 12px;
 }
