@@ -135,7 +135,7 @@ function App() {
 
   // Drag
   const dragSnapshotRef = useRef<BulbState | null>(null);
-  const handleDrag = ({ dx, dy, axis }: DragDelta) => {
+  const handleDrag = ({ dx, dy, axis, ctrl }: DragDelta) => {
     if (selection.size === 0) return;
     // Until the drag picks an axis the user hasn't actually moved enough
     // to apply anything; skip so we don't snapshot/push history for a
@@ -145,6 +145,7 @@ function App() {
       dragSnapshotRef.current = bulbState;
       pushHistory();
     }
+    const scale = ctrl ? 6 : 1;
     setBulbState((cur) => {
       const next = { ...cur };
       selection.forEach((id) => {
@@ -152,10 +153,10 @@ function App() {
         if (s === undefined) return;
         if (axis === 'y') {
           // Drag up reduces pos (raises bulb), down increases
-          const newPos = Math.max(0, Math.min(1, s.pos + dy / 320));
+          const newPos = Math.max(0, Math.min(1, s.pos + dy / (320 * scale)));
           next[id] = { ...s, pos: newPos };
         } else if (axis === 'x') {
-          const newBright = Math.max(0, Math.min(1, s.bright + dx / 280));
+          const newBright = Math.max(0, Math.min(1, s.bright + dx / (280 * scale)));
           next[id] = { ...s, bright: newBright };
         }
       });

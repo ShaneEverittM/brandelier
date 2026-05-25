@@ -42,4 +42,4 @@ export type RenderStyle = 'flat' | 'glow' | 'wire';
 export type Mode = 'manual' | 'wave' | 'precise';
 
 export type DragAxis = 'x' | 'y' | null;
-export type DragDelta = { dx: number; dy: number; axis: DragAxis };
+export type DragDelta = { dx: number; dy: number; axis: DragAxis; ctrl: boolean };

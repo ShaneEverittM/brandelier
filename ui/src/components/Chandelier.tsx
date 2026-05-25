@@ -151,7 +151,7 @@ export function Chandelier({
           axis = totalDy > totalDx ? 'y' : 'x';
         }
       }
-      onDrag({ dx, dy, axis });
+      onDrag({ dx, dy, axis, ctrl: e.ctrlKey });
       drag.lastX = e.clientX;
       drag.lastY = e.clientY;
       drag.axis = axis;
