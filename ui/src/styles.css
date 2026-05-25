@@ -509,6 +509,67 @@ body {
   border-color: var(--ink-3);
 }
 
+/* Presets */
+.presets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.preset-item {
+  background: var(--paper);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.preset-item:hover {
+  background: var(--paper-3);
+}
+.preset-item .pname {
+  font: 500 13px/1.2 var(--sans);
+  color: var(--ink);
+}
+.preset-item .pname em {
+  font: 300 italic 12px/1 var(--serif);
+  color: var(--ink-3);
+  margin-left: 6px;
+}
+.preset-item.active {
+  background: var(--ink);
+}
+.preset-item.active .pname {
+  color: var(--paper);
+}
+
+.preset-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.preset-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.preset-add input {
+  flex: 1;
+  appearance: none;
+  border: 0.5px solid var(--rule);
+  background: var(--paper);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  font: 400 12px/1 var(--sans);
+  color: var(--ink);
+  outline: none;
+}
+.preset-add input:focus {
+  border-color: var(--ink-3);
+}
+
 /* Bottom action bar */
 .actionbar {
   grid-column: 1 / 3;

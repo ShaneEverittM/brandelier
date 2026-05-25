@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 
 use axum::Json;
 use axum::Router;
+use axum::extract::Path as AxumPath;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::http::Uri;
@@ -71,6 +73,9 @@ pub enum Error {
 
     #[error(transparent)]
     Io(#[from] io::Error),
+
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 }
 
 impl IntoResponse for Error {
@@ -91,6 +96,60 @@ struct Args {
 struct AppState {
     driver: ActorRef<Driver>,
     topology: config::Topology,
+}
+
+const PRESETS_DIR: &str = "presets";
+
+fn safe_preset_path(name: &str) -> Option<PathBuf> {
+    if name.is_empty() || name.contains(['/', '\\', '.']) {
+        return None;
+    }
+    Some(Path::new(PRESETS_DIR).join(format!("{name}.json")))
+}
+
+async fn list_presets() -> Result<Json<Vec<String>>> {
+    let dir = Path::new(PRESETS_DIR);
+    if !dir.exists() {
+        return Ok(Json(vec![]));
+    }
+    let mut names: Vec<String> = std::fs::read_dir(dir)?
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            name.strip_suffix(".json").map(str::to_owned)
+        })
+        .collect();
+    names.sort();
+    Ok(Json(names))
+}
+
+#[derive(serde::Deserialize)]
+struct SavePresetBody {
+    name: String,
+    state: HashMap<BulbId, BulbCommand>,
+}
+
+async fn save_preset(Json(body): Json<SavePresetBody>) -> Result<()> {
+    let path = safe_preset_path(&body.name)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
+    std::fs::create_dir_all(PRESETS_DIR)?;
+    std::fs::write(path, serde_json::to_string_pretty(&body.state)?)?;
+    Ok(())
+}
+
+async fn get_preset(
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<HashMap<BulbId, BulbCommand>>> {
+    let path = safe_preset_path(&name)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
+    let text = std::fs::read_to_string(path)?;
+    Ok(Json(serde_json::from_str(&text)?))
+}
+
+async fn delete_preset(AxumPath(name): AxumPath<String>) -> Result<()> {
+    let path = safe_preset_path(&name)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
+    std::fs::remove_file(path)?;
+    Ok(())
 }
 
 async fn topology(State(AppState { topology, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
@@ -181,6 +240,8 @@ async fn main() -> Result<()> {
         .route("/status", get(status))
         .route("/bulbs", post(bulbs))
         .route("/zero", post(zero))
+        .route("/presets", get(list_presets).post(save_preset))
+        .route("/presets/{name}", get(get_preset).delete(delete_preset))
         .fallback(|| async { StatusCode::NOT_FOUND });
 
     let router = Router::new()

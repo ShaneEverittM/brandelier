@@ -6,6 +6,7 @@ import { CameraWidget } from './components/CameraWidget';
 import { Chandelier } from './components/Chandelier';
 import { GroupsPanel } from './components/GroupsPanel';
 import { Inspector } from './components/Inspector';
+import { PresetsPanel } from './components/PresetsPanel';
 import { WavePanel } from './components/WavePanel';
 import { useOrbitDrag } from './hooks/useOrbitDrag.ts';
 import { BULBS } from './topology';
@@ -33,6 +34,9 @@ function App() {
   const [bulbStatus, setBulbStatus] = useState<BulbStatusMap>({});
   const [sceneReady, setSceneReady] = useState(false);
   const [selection, setSelection] = useState<Set<BulbId>>(new Set());
+  const [presets, setPresets] = useState<string[]>([]);
+  const [previewingPreset, setPreviewingPreset] = useState<string | null>(null);
+  const previewSnapshotRef = useRef<BulbState | null>(null);
   const [history, setHistory] = useState<BulbState[]>([]);
   const [future, setFuture] = useState<BulbState[]>([]);
   const [mode, setMode] = useState<Mode>('manual');
@@ -101,6 +105,75 @@ function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state),
     }).catch((err) => console.error('Failed to push bulb state:', err));
+  };
+
+  // Presets
+  const fetchPresets = () => {
+    fetch('/api/presets')
+      .then((r) => r.json() as Promise<string[]>)
+      .then(setPresets)
+      .catch(console.error);
+  };
+
+  useEffect(() => {
+    if (mode === 'presets') fetchPresets();
+    if (mode !== 'presets' && previewSnapshotRef.current) {
+      setBulbState(previewSnapshotRef.current);
+      previewSnapshotRef.current = null;
+      setPreviewingPreset(null);
+    }
+  }, [mode]);
+
+  const previewPreset = (name: string) => {
+    if (!previewSnapshotRef.current) {
+      previewSnapshotRef.current = bulbStateRef.current;
+    }
+    fetch(`/api/presets/${encodeURIComponent(name)}`)
+      .then((r) => r.json() as Promise<BulbState>)
+      .then((state) => {
+        setBulbState(state);
+        setPreviewingPreset(name);
+      })
+      .catch(console.error);
+  };
+
+  const cancelPreview = () => {
+    if (previewSnapshotRef.current) {
+      setBulbState(previewSnapshotRef.current);
+      previewSnapshotRef.current = null;
+    }
+    setPreviewingPreset(null);
+  };
+
+  const loadPreset = () => {
+    const state = bulbStateRef.current;
+    const snapshot = previewSnapshotRef.current;
+    previewSnapshotRef.current = null;
+    setPreviewingPreset(null);
+    if (snapshot) {
+      setHistory((h) => [...h.slice(-49), snapshot]);
+      setFuture([]);
+    }
+    pushBulbs(state);
+  };
+
+  const savePreset = (name: string) => {
+    void fetch('/api/presets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, state: bulbStateRef.current }),
+    })
+      .then(() => fetchPresets())
+      .catch(console.error);
+  };
+
+  const deletePreset = (name: string) => {
+    void fetch(`/api/presets/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      .then(() => {
+        cancelPreview();
+        fetchPresets();
+      })
+      .catch(console.error);
   };
 
   const undo = () => {
@@ -377,6 +450,7 @@ function App() {
           }
         }}
         onContextMenu={(e) => e.preventDefault()}
+        onClick={() => { if (previewingPreset) cancelPreview(); }}
       >
         <div className="stage-meta">
           <span className="l">Selection</span>
@@ -477,6 +551,20 @@ function App() {
             currentSelectionCount={selection.size}
           />
         </section>
+
+        {mode === 'presets' && (
+          <section className="rail-section">
+            <PresetsPanel
+              presets={presets}
+              previewing={previewingPreset}
+              onPreview={previewPreset}
+              onCancelPreview={cancelPreview}
+              onLoad={loadPreset}
+              onSave={savePreset}
+              onDelete={deletePreset}
+            />
+          </section>
+        )}
 
         {mode === 'wave' && (
           <section className="rail-section">

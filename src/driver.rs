@@ -236,7 +236,7 @@ impl Message<Cycle> for Driver {
 }
 
 /// Per-bulb desired state. `pos` and `bright` are normalized [0, 1].
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct BulbCommand {
     pub pos: f64,
     pub bright: f64,
