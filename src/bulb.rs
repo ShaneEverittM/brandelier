@@ -129,7 +129,7 @@ impl Response {
         }
 
         Ok(Self {
-            extension: f64::from((data[0] as u16) + (data[1] as u16) / 256),
+            extension: (data[0] as f64) + (data[1] as f64) / 256.0,
             speed: (data[2] as f64) / 32.0,
             light: data[3] & 0b0001 != 0,
             zeroing: data[3] & 0b0010 != 0,

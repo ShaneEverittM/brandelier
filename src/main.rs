@@ -23,6 +23,7 @@ use validator::ValidationErrors;
 
 use crate::driver::BulbCommand;
 use crate::driver::BulbStatus;
+use crate::driver::ConfigureMaxExt;
 use crate::driver::Cycle;
 use crate::driver::Driver;
 use crate::driver::ReadAll;
@@ -72,6 +73,9 @@ pub enum Error {
     ReadAllError(#[from] SendError<ReadAll, driver::Error>),
 
     #[error(transparent)]
+    ConfigureMaxExtError(#[from] SendError<ConfigureMaxExt, driver::Error>),
+
+    #[error(transparent)]
     Io(#[from] io::Error),
 
     #[error(transparent)]
@@ -99,6 +103,25 @@ struct AppState {
 }
 
 const PRESETS_DIR: &str = "presets";
+const SETTINGS_FILE: &str = "presets/settings.json";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Settings {
+    max_length_in: f64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { max_length_in: 37.0 }
+    }
+}
+
+fn load_settings() -> Settings {
+    std::fs::read_to_string(SETTINGS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
 
 fn safe_preset_path(name: &str) -> Option<PathBuf> {
     if name.is_empty() || name.contains(['/', '\\', '.']) {
@@ -115,7 +138,9 @@ async fn list_presets() -> Result<Json<Vec<String>>> {
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| {
             let name = e.ok()?.file_name().into_string().ok()?;
-            name.strip_suffix(".json").map(str::to_owned)
+            name.strip_suffix(".json")
+                .filter(|n| *n != "settings")
+                .map(str::to_owned)
         })
         .collect();
     names.sort();
@@ -179,6 +204,25 @@ async fn bulbs(
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+struct MaxLengthBody {
+    inches: f64,
+}
+
+async fn get_settings() -> Result<Json<Settings>> {
+    Ok(Json(load_settings()))
+}
+
+async fn set_max_length(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(body): Json<MaxLengthBody>,
+) -> Result<()> {
+    driver.ask(ConfigureMaxExt { max_in: body.inches }).await?;
+    std::fs::create_dir_all(PRESETS_DIR)?;
+    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&Settings { max_length_in: body.inches })?)?;
+    Ok(())
+}
+
 /// Static UI assets bundled at compile time.
 ///
 /// In release builds these are baked into the binary (single artifact for
@@ -230,6 +274,11 @@ async fn main() -> Result<()> {
     let bus = Bus::spawn(Bus::autodetect(&config.i2c)?);
     let driver = Driver::spawn(Driver::new(&bus, &config.driver, &config.topology));
 
+    driver.ask(ReadAll).await?;
+
+    let settings = load_settings();
+    driver.ask(ConfigureMaxExt { max_in: settings.max_length_in }).await?;
+
     let state = AppState {
         driver,
         topology: config.topology,
@@ -242,6 +291,8 @@ async fn main() -> Result<()> {
         .route("/zero", post(zero))
         .route("/presets", get(list_presets).post(save_preset))
         .route("/presets/{name}", get(get_preset).delete(delete_preset))
+        .route("/settings", get(get_settings))
+        .route("/settings/max-length", post(set_max_length))
         .fallback(|| async { StatusCode::NOT_FOUND });
 
     let router = Router::new()

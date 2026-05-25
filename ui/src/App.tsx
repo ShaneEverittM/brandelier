@@ -48,6 +48,28 @@ function App() {
     { id: 'g3', name: 'Center only', ids: ['c'] },
   ]);
 
+  const [maxLength, setMaxLength] = useState(37);
+  const maxLengthSynced = useRef(false);
+  useEffect(() => {
+    fetch('/api/settings')
+      .then((r) => r.json() as Promise<{ max_length_in: number }>)
+      .then((data) => {
+        maxLengthSynced.current = true;
+        setMaxLength(data.max_length_in);
+      })
+      .catch(console.error);
+  }, []);
+  useEffect(() => {
+    if (!maxLengthSynced.current) return;
+    const id = setTimeout(() => {
+      void fetch('/api/settings/max-length', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inches: maxLength }),
+      }).catch(console.error);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [maxLength]);
   const [wave, setWave] = useState<Wave>({ pattern: 'sine', amp: 0.4, speed: 1.0, phase: 0.5 });
   const [isPlaying, setIsPlaying] = useState(false);
   const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
@@ -388,6 +410,9 @@ function App() {
           <button role="tab" aria-pressed={mode === 'schedule'} onClick={() => setMode('schedule')}>
             Schedule
           </button>
+          <button role="tab" aria-pressed={mode === 'settings'} onClick={() => setMode('settings')}>
+            Settings
+          </button>
         </nav>
 
         <div className="topbar-right">
@@ -498,90 +523,132 @@ function App() {
 
       {/* Right rail */}
       <aside className="rail">
-        <section className="rail-section">
-          <div className="rail-h">
-            <h3>Selection</h3>
-            <span className="num">{selection.size} / 19</span>
-          </div>
-          <Inspector
-            selectedIds={selection}
-            bulbState={bulbState}
-            onClear={handleClear}
-            onZero={() => {
-              const payload: Record<string, { pos: number; bright: number }> = {};
-              selection.forEach((id) => {
-                payload[id] = bulbState[id] ?? { pos: 0, bright: 0 };
-              });
-              void fetch('/api/zero', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-              }).catch((err) => {
-                console.error('Failed to send zero command:', err);
-              });
-            }}
-          />
-          {selection.size > 0 && (
-            <div className="action-row">
-              <button className="btn" onClick={() => setBrightForSelection(0)}>
-                Off
-              </button>
-              <button className="btn" onClick={() => setBrightForSelection(0.05)}>
-                5%
-              </button>
-              <button className="btn" onClick={() => setBrightForSelection(0.15)}>
-                15%
-              </button>
-              <button className="btn" onClick={() => setBrightForSelection(0.25)}>
-                25%
-              </button>
-              <button className="btn" onClick={() => setBrightForSelection(0.5)}>
-                50%
-              </button>
-              <button className="btn" onClick={() => setBrightForSelection(1)}>
-                Full
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="rail-section">
-          <GroupsPanel
-            groups={groups}
-            activeGroup={activeGroup}
-            onActivate={activateGroup}
-            onCreate={createGroup}
-            currentSelectionCount={selection.size}
-          />
-        </section>
-
-        {mode === 'presets' && (
+        {mode === 'settings' && (
           <section className="rail-section">
-            <PresetsPanel
-              presets={presets}
-              previewing={previewingPreset}
-              onPreview={previewPreset}
-              onCancelPreview={cancelPreview}
-              onLoad={loadPreset}
-              onSave={savePreset}
-              onDelete={deletePreset}
-            />
+            <div className="rail-h">
+              <h3>Settings</h3>
+            </div>
+            <div className="settings-row">
+              <label className="settings-label">
+                Max cord length
+                <span className="settings-value">{maxLength} in</span>
+              </label>
+              <input
+                type="range"
+                min={5}
+                max={100}
+                value={maxLength}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  const scale = maxLength / next;
+                  setBulbState((cur) => {
+                    const s: typeof cur = {};
+                    for (const id in cur) {
+                      s[id] = { ...cur[id], pos: Math.min(1, cur[id].pos * scale) };
+                    }
+                    return s;
+                  });
+                  setMaxLength(next);
+                }}
+                className="settings-slider"
+              />
+              <div className="settings-range-labels">
+                <span>5 in</span>
+                <span>100 in</span>
+              </div>
+            </div>
           </section>
         )}
 
-        {mode === 'wave' && (
-          <section className="rail-section">
-            <WavePanel
-              wave={wave}
-              onWave={setWave}
-              isPlaying={isPlaying}
-              onPlay={() => {
-                setMode('wave');
-                setIsPlaying(true);
-              }}
-              onStop={() => setIsPlaying(false)}
-            />
-          </section>
+        {mode !== 'settings' && (
+          <>
+            <section className="rail-section">
+              <div className="rail-h">
+                <h3>Selection</h3>
+                <span className="num">{selection.size} / 19</span>
+              </div>
+              <Inspector
+                selectedIds={selection}
+                bulbState={bulbState}
+                maxLength={maxLength}
+                onClear={handleClear}
+                onZero={() => {
+                  const payload: Record<string, { pos: number; bright: number }> = {};
+                  selection.forEach((id) => {
+                    payload[id] = bulbState[id] ?? { pos: 0, bright: 0 };
+                  });
+                  void fetch('/api/zero', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  }).catch((err) => {
+                    console.error('Failed to send zero command:', err);
+                  });
+                }}
+              />
+              {selection.size > 0 && (
+                <div className="action-row">
+                  <button className="btn" onClick={() => setBrightForSelection(0)}>
+                    Off
+                  </button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.05)}>
+                    5%
+                  </button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.15)}>
+                    15%
+                  </button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.25)}>
+                    25%
+                  </button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.5)}>
+                    50%
+                  </button>
+                  <button className="btn" onClick={() => setBrightForSelection(1)}>
+                    Full
+                  </button>
+                </div>
+              )}
+            </section>
+
+            <section className="rail-section">
+              <GroupsPanel
+                groups={groups}
+                activeGroup={activeGroup}
+                onActivate={activateGroup}
+                onCreate={createGroup}
+                currentSelectionCount={selection.size}
+              />
+            </section>
+
+            {mode === 'presets' && (
+              <section className="rail-section">
+                <PresetsPanel
+                  presets={presets}
+                  previewing={previewingPreset}
+                  onPreview={previewPreset}
+                  onCancelPreview={cancelPreview}
+                  onLoad={loadPreset}
+                  onSave={savePreset}
+                  onDelete={deletePreset}
+                />
+              </section>
+            )}
+
+            {mode === 'wave' && (
+              <section className="rail-section">
+                <WavePanel
+                  wave={wave}
+                  onWave={setWave}
+                  isPlaying={isPlaying}
+                  onPlay={() => {
+                    setMode('wave');
+                    setIsPlaying(true);
+                  }}
+                  onStop={() => setIsPlaying(false)}
+                />
+              </section>
+            )}
+          </>
         )}
       </aside>
 

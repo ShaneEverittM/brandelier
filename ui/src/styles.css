@@ -571,6 +571,37 @@ body {
 }
 
 
+/* Settings */
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+.settings-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font: 500 12px/1 var(--sans);
+  color: var(--ink);
+}
+.settings-value {
+  font: 400 12px/1 var(--mono);
+  color: var(--ink-3);
+}
+.settings-slider {
+  width: 100%;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+.settings-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font: 400 10px/1 var(--mono);
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+
 /* Camera widget */
 .camera-widget {
   position: absolute;

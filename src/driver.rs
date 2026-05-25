@@ -27,10 +27,10 @@ use crate::i2c;
 use crate::topology;
 use crate::topology::BulbId;
 
-/// Mapping from a normalized [0, 1] cord-drop ratio to physical extension (cm)
+/// Mapping from a normalized [0, 1] cord-drop ratio to physical extension (inches)
 /// and from normalized [0, 1] brightness to the 0..255 byte the firmware
 /// expects.
-const MAX_EXTENSION: f64 = 65.0;
+const MAX_EXTENSION: f64 = 100.0;
 const MAX_BRIGHTNESS: f64 = 255.0;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -161,6 +161,7 @@ pub struct Driver {
     config: config::Driver,
     topology: config::Topology,
     last_status: HashMap<BulbId, BulbStatus>,
+    max_extension: f64,
 }
 
 impl Actor for Driver {
@@ -258,7 +259,7 @@ impl Message<SetAll> for Driver {
             let Some(bulb) = state.bulbs.get_mut(&id) else {
                 continue;
             };
-            let extension = cmd.pos.clamp(0.0, 1.0) * MAX_EXTENSION;
+            let extension = cmd.pos.clamp(0.0, 1.0) * self.max_extension;
             let brightness = cmd.bright.clamp(0.0, 1.0) * MAX_BRIGHTNESS;
             bulb.write(Command::SetBrightness {
                 extension,
@@ -285,7 +286,7 @@ impl Message<ZeroSome> for Driver {
             let Some(bulb) = state.bulbs.get_mut(&id) else {
                 continue;
             };
-            let extension = cmd.pos.clamp(0.0, 1.0) * MAX_EXTENSION;
+            let extension = cmd.pos.clamp(0.0, 1.0) * self.max_extension;
             bulb.write(Command::Zero { extension }).await?;
         }
         self.mode = Mode::Idle { state };
@@ -354,7 +355,7 @@ impl Message<ReadAll> for Driver {
                     (
                         id.clone(),
                         BulbStatus {
-                            pos: bulb.real_extension() / MAX_EXTENSION,
+                            pos: bulb.real_extension() / self.max_extension,
                             light_on: bulb.light_on(),
                             zeroing: bulb.zeroing(),
                             disabled: bulb.disable_all(),
@@ -375,6 +376,32 @@ impl Message<ReadAll> for Driver {
     }
 }
 
+pub struct ConfigureMaxExt {
+    pub max_in: f64,
+}
+
+impl Message<ConfigureMaxExt> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: ConfigureMaxExt,
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Result<()> {
+        self.max_extension = msg.max_in.clamp(0.0, MAX_EXTENSION);
+        let mut state = self.idle().await?;
+        for bulb in state.bulbs.values_mut() {
+            bulb.write(Command::SetMaxExtension {
+                extension: bulb.real_extension(),
+                max: self.max_extension,
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        Ok(())
+    }
+}
+
 impl Driver {
     pub fn new(
         bus: &ActorRef<i2c::Bus>,
@@ -388,6 +415,7 @@ impl Driver {
             config: config.clone(),
             topology: topology.clone(),
             last_status: HashMap::new(),
+            max_extension: MAX_EXTENSION,
         }
     }
 

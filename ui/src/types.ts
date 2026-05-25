@@ -39,7 +39,7 @@ export type Group = {
 
 export type RenderStyle = 'flat' | 'glow' | 'wire';
 
-export type Mode = 'manual' | 'presets' | 'wave' | 'schedule';
+export type Mode = 'manual' | 'presets' | 'wave' | 'schedule' | 'settings';
 
 export type DragAxis = 'x' | 'y' | null;
 export type DragDelta = { dx: number; dy: number; axis: DragAxis; ctrl: boolean };

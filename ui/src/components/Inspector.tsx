@@ -3,11 +3,12 @@ import type { BulbId, BulbState } from '../types';
 type Props = {
   selectedIds: Set<BulbId>;
   bulbState: BulbState;
+  maxLength: number;
   onClear: () => void;
   onZero: () => void;
 };
 
-export function Inspector({ selectedIds, bulbState, onClear, onZero }: Props) {
+export function Inspector({ selectedIds, bulbState, maxLength, onClear, onZero }: Props) {
   const n = selectedIds.size;
   if (n === 0) {
     return (
@@ -26,7 +27,7 @@ export function Inspector({ selectedIds, bulbState, onClear, onZero }: Props) {
   });
   const avgPos = posSum / n;
   const avgBright = brightSum / n;
-  const heightCm = Math.round(40 + avgPos * 80);
+  const dropIn = (avgPos * maxLength).toFixed(1);
 
   return (
     <div className="inspector">
@@ -34,8 +35,8 @@ export function Inspector({ selectedIds, bulbState, onClear, onZero }: Props) {
         <div className="stat">
           <div className="lbl">Drop</div>
           <div className="val">
-            {heightCm}
-            <span className="unit">cm</span>
+            {dropIn}
+            <span className="unit">in</span>
           </div>
         </div>
         <div className="stat">
