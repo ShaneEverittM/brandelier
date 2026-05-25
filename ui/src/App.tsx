@@ -95,12 +95,21 @@ function App() {
     setFuture([]);
   }, [bulbState]);
 
+  const pushBulbs = (state: BulbState) => {
+    void fetch('/api/bulbs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    }).catch((err) => console.error('Failed to push bulb state:', err));
+  };
+
   const undo = () => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
     setHistory((h) => h.slice(0, -1));
     setFuture((f) => [bulbState, ...f].slice(0, 50));
     setBulbState(prev);
+    pushBulbs(prev);
   };
   const redo = () => {
     if (future.length === 0) return;
@@ -108,6 +117,7 @@ function App() {
     setFuture((f) => f.slice(1));
     setHistory((h) => [...h, bulbState]);
     setBulbState(next);
+    pushBulbs(next);
   };
 
   // Selection
@@ -296,11 +306,14 @@ function App() {
           <button role="tab" aria-pressed={mode === 'manual'} onClick={() => setMode('manual')}>
             Manual
           </button>
+          <button role="tab" aria-pressed={mode === 'presets'} onClick={() => setMode('presets')}>
+            Presets
+          </button>
           <button role="tab" aria-pressed={mode === 'wave'} onClick={() => setMode('wave')}>
             Wave
           </button>
-          <button role="tab" aria-pressed={mode === 'precise'} onClick={() => setMode('precise')}>
-            Precise
+          <button role="tab" aria-pressed={mode === 'schedule'} onClick={() => setMode('schedule')}>
+            Schedule
           </button>
         </nav>
 
