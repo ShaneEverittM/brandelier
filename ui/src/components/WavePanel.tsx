@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { Wave, WavePattern } from '../types';
+import type { Wave, WavePattern, WaveTarget } from '../types';
 
 const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
   { id: 'sine', name: 'Wave', icon: <path d="M2 8 Q 9 1 16 8 T 30 8 T 34 8" /> },
@@ -27,6 +27,9 @@ const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
     ),
   },
 ];
+
+const fromQuad = (t: number, min: number, max: number) => min + (max - min) * t * t;
+const toQuad = (v: number, min: number, max: number) => Math.sqrt((v - min) / (max - min));
 
 function formatPeriod(s: number): string {
   if (s < 60) return `${s}s`;
@@ -76,16 +79,32 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
           </div>
           <input
             type="range"
-            min="5"
-            max="3600"
-            step="1"
-            value={wave.spinPeriod}
+            min="0"
+            max="1"
+            step="0.001"
+            value={toQuad(wave.spinPeriod, 5, 3600)}
             disabled={isPlaying}
-            onChange={(e) => onWave({ ...wave, spinPeriod: parseInt(e.target.value) })}
+            onChange={(e) => onWave({ ...wave, spinPeriod: Math.round(fromQuad(parseFloat(e.target.value), 5, 3600)) })}
           />
         </>
       ) : (
         <>
+          <div className="target-radio">
+            {(['extension', 'brightness'] as WaveTarget[]).map((t) => (
+              <label key={t} className={wave.target === t ? 'active' : ''}>
+                <input
+                  type="radio"
+                  name="wave-target"
+                  value={t}
+                  checked={wave.target === t}
+                  disabled={isPlaying}
+                  onChange={() => onWave({ ...wave, target: t })}
+                />
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </label>
+            ))}
+          </div>
+
           <div className="row">
             <label>Amplitude</label>
             <span className="value">{Math.round(wave.amp * 100)}%</span>
@@ -106,12 +125,12 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
           </div>
           <input
             type="range"
-            min="0.01"
-            max="2"
-            step="0.01"
-            value={wave.speed}
+            min="0"
+            max="1"
+            step="0.001"
+            value={toQuad(wave.speed, 0.01, 5)}
             disabled={isPlaying}
-            onChange={(e) => onWave({ ...wave, speed: parseFloat(e.target.value) })}
+            onChange={(e) => onWave({ ...wave, speed: fromQuad(parseFloat(e.target.value), 0.01, 5) })}
           />
 
           <div className="row">
@@ -120,12 +139,12 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
           </div>
           <input
             type="range"
-            min="0.2"
-            max="10"
-            step="0.1"
-            value={wave.wavelength}
+            min="0"
+            max="1"
+            step="0.001"
+            value={toQuad(wave.wavelength, 0.2, 10)}
             disabled={isPlaying}
-            onChange={(e) => onWave({ ...wave, wavelength: parseFloat(e.target.value) })}
+            onChange={(e) => onWave({ ...wave, wavelength: fromQuad(parseFloat(e.target.value), 0.2, 10) })}
           />
 
           {wave.pattern !== 'ripple' && (

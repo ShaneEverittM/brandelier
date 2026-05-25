@@ -70,7 +70,7 @@ function App() {
     }, 300);
     return () => clearTimeout(id);
   }, [maxLength]);
-  const [wave, setWave] = useState<Wave>({ pattern: 'sine', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30 });
+  const [wave, setWave] = useState<Wave>({ pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30 });
   const [isPlaying, setIsPlaying] = useState(false);
   const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
   const [orbiting, setOrbiting] = useState(false);
@@ -356,10 +356,11 @@ function App() {
           const omega = 2 * Math.PI * wave.speed * 0.04;
           const v = Math.sin(omega * t - phaseOffset);
           const offset = v * wave.amp * 0.4;
-          next[id] = {
-            pos: Math.max(0, Math.min(1, base.pos + offset)),
-            bright: base.bright,
-          };
+          if (wave.target === 'brightness') {
+            next[id] = { pos: base.pos, bright: Math.max(0, Math.min(1, base.bright + offset)) };
+          } else {
+            next[id] = { pos: Math.max(0, Math.min(1, base.pos + offset)), bright: base.bright };
+          }
         });
       }
       setBulbState(next);

@@ -400,6 +400,38 @@ body {
   cursor: default;
 }
 
+.target-radio {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.target-radio label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  border: 0.5px solid var(--rule);
+  border-radius: 4px;
+  font: 500 10px/1 var(--mono);
+  color: var(--ink-3);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s, color 0.1s;
+}
+.target-radio label:hover {
+  background: var(--paper-3);
+}
+.target-radio label.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.target-radio input[type='radio'] {
+  display: none;
+}
+
 .pattern-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

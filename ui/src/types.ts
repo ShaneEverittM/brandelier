@@ -24,8 +24,11 @@ export type BulbStatusMap = Record<BulbId, BulbStatusEntry>;
 export type Camera = { yaw: number; elevation: number };
 
 export type WavePattern = 'sine' | 'ripple' | 'spin';
+export type WaveTarget = 'extension' | 'brightness';
+
 export type Wave = {
   pattern: WavePattern;
+  target: WaveTarget;
   amp: number;
   speed: number;
   wavelength: number;
