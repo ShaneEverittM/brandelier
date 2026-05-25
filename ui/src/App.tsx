@@ -38,8 +38,9 @@ function App() {
   const [mode, setMode] = useState<Mode>('manual');
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([
-    { id: 'g1', name: 'Inner ring', ids: BULBS.filter((b) => b.ring === 1).map((b) => b.id) },
-    { id: 'g2', name: 'Outer ring', ids: BULBS.filter((b) => b.ring === 2).map((b) => b.id) },
+    { id: 'g0', name: 'All', ids: BULBS.map((b) => b.id) },
+    { id: 'g1', name: 'Outer ring', ids: BULBS.filter((b) => b.ring === 2).map((b) => b.id) },
+    { id: 'g2', name: 'Inner ring', ids: BULBS.filter((b) => b.ring === 1).map((b) => b.id) },
     { id: 'g3', name: 'Center only', ids: ['c'] },
   ]);
 
@@ -434,8 +435,8 @@ function App() {
               <button className="btn" onClick={() => setBrightForSelection(0)}>
                 Off
               </button>
-              <button className="btn" onClick={() => setBrightForSelection(0.1)}>
-                10%
+              <button className="btn" onClick={() => setBrightForSelection(0.05)}>
+                5%
               </button>
               <button className="btn" onClick={() => setBrightForSelection(0.15)}>
                 15%
@@ -446,7 +447,7 @@ function App() {
               <button className="btn" onClick={() => setBrightForSelection(0.5)}>
                 50%
               </button>
-              <button className="btn primary" onClick={() => setBrightForSelection(1)}>
+              <button className="btn" onClick={() => setBrightForSelection(1)}>
                 Full
               </button>
             </div>
@@ -482,13 +483,6 @@ function App() {
       {/* Bottom action bar */}
       <footer className="actionbar">
         <div className="group">
-          <button className="transport-btn" onClick={selectAll}>
-            Select all
-          </button>
-          <button className="transport-btn" onClick={handleClear}>
-            Clear
-          </button>
-          <div className="divider"></div>
           <button className="transport-btn">Save config</button>
           <button className="transport-btn">Load</button>
           <button className="transport-btn">Schedule</button>
