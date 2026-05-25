@@ -7,6 +7,7 @@ type Props = {
   activeGroup: string | null;
   onActivate: (id: string) => void;
   onCreate: (name: string) => void;
+  onDelete: (id: string) => void;
   currentSelectionCount: number;
 };
 
@@ -15,6 +16,7 @@ export function GroupsPanel({
   activeGroup,
   onActivate,
   onCreate,
+  onDelete,
   currentSelectionCount,
 }: Props) {
   const [name, setName] = useState('');
@@ -74,6 +76,22 @@ export function GroupsPanel({
         >
           Save
         </button>
+        {(() => {
+          const active = groups.find((g) => g.id === activeGroup);
+          return active && !active.builtin ? (
+            <button
+              className="iconbtn danger"
+              style={{ flex: 'none' }}
+              onClick={() => {
+                if (window.confirm(`Delete group "${active.name}"?`)) onDelete(active.id);
+              }}
+            >
+              <svg viewBox="0 0 14 14" width="12" height="12" fill="currentColor">
+                <path d="M5 1h4a1 1 0 0 1 1 1H4a1 1 0 0 1 1-1ZM2 3h10l-.9 9H2.9L2 3Zm3 2v5h1V5H5Zm3 0v5h1V5H8Z" />
+              </svg>
+            </button>
+          ) : null;
+        })()}
       </div>
     </div>
   );

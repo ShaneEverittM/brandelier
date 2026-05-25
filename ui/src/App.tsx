@@ -42,11 +42,33 @@ function App() {
   const [mode, setMode] = useState<Mode>('manual');
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([
-    { id: 'g0', name: 'All', ids: BULBS.map((b) => b.id) },
-    { id: 'g1', name: 'Outer ring', ids: BULBS.filter((b) => b.ring === 2).map((b) => b.id) },
-    { id: 'g2', name: 'Inner ring', ids: BULBS.filter((b) => b.ring === 1).map((b) => b.id) },
-    { id: 'g3', name: 'Center only', ids: ['c'] },
+    { id: 'g0', name: 'All', ids: BULBS.map((b) => b.id), builtin: true },
+    { id: 'g1', name: 'Outer ring', ids: BULBS.filter((b) => b.ring === 2).map((b) => b.id), builtin: true },
+    { id: 'g2', name: 'Inner ring', ids: BULBS.filter((b) => b.ring === 1).map((b) => b.id), builtin: true },
+    { id: 'g3', name: 'Center only', ids: ['c'], builtin: true },
   ]);
+
+  const groupsSynced = useRef(false);
+  useEffect(() => {
+    fetch('/api/groups')
+      .then((r) => r.json() as Promise<Group[]>)
+      .then((data) => {
+        groupsSynced.current = true;
+        if (Array.isArray(data) && data.length > 0) setGroups(data);
+      })
+      .catch(() => { groupsSynced.current = true; });
+  }, []);
+  useEffect(() => {
+    if (!groupsSynced.current) return;
+    const id = setTimeout(() => {
+      void fetch('/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(groups),
+      }).catch(console.error);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [groups]);
 
   const [maxLength, setMaxLength] = useState(37);
   const maxLengthSynced = useRef(false);
@@ -70,7 +92,17 @@ function App() {
     }, 300);
     return () => clearTimeout(id);
   }, [maxLength]);
-  const [wave, setWave] = useState<Wave>({ pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30 });
+  const [wave, setWave] = useState<Wave>({ pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false });
+  const [waveGroupId, setWaveGroupId] = useState<string | null>(null);
+  const [wavePresetName, setWavePresetName] = useState<string | null>(null);
+  const wavePresetSnapshotRef = useRef<BulbState | null>(null);
+  useEffect(() => {
+    if (!wavePresetName) { wavePresetSnapshotRef.current = null; return; }
+    fetch(`/api/presets/${encodeURIComponent(wavePresetName)}`)
+      .then((r) => r.json() as Promise<BulbState>)
+      .then((data) => { wavePresetSnapshotRef.current = data; })
+      .catch(() => { wavePresetSnapshotRef.current = null; });
+  }, [wavePresetName]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
   const [orbiting, setOrbiting] = useState(false);
@@ -138,7 +170,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (mode === 'presets') fetchPresets();
+    if (mode === 'presets' || mode === 'wave') fetchPresets();
     if (mode !== 'presets' && previewSnapshotRef.current) {
       setBulbState(previewSnapshotRef.current);
       previewSnapshotRef.current = null;
@@ -297,19 +329,26 @@ function App() {
     setGroups((gs) => [...gs, { id, name, ids: [...selection] }]);
     setActiveGroup(id);
   };
+  const deleteGroup = (id: string) => {
+    setGroups((gs) => gs.filter((g) => g.id !== id));
+    if (activeGroup === id) setActiveGroup(null);
+  };
 
   // Wave animation
   const waveStartRef = useRef(0);
   useEffect(() => {
     if (!isPlaying) return;
     waveStartRef.current = performance.now();
-    const baseSnapshot = { ...bulbState };
+    const baseSnapshot = wavePresetSnapshotRef.current ?? { ...bulbState };
     let raf = 0;
     let lastPush = 0;
     let waveController: AbortController | null = null;
     // Per-ring ordered lists for spin interpolation (ring 0 excluded).
     // BULBS is already in ringIndex order so no additional sorting is needed.
-    const targets0 = new Set(selection.size > 0 ? [...selection] : BULBS.map((b) => b.id));
+    const waveGroup = waveGroupId ? groups.find((g) => g.id === waveGroupId) : null;
+    const targets0 = new Set(
+      waveGroup ? waveGroup.ids : selection.size > 0 ? [...selection] : BULBS.map((b) => b.id),
+    );
     const spinRings = new Map<number, string[]>();
     BULBS.forEach((b) => {
       if (b.ring === 0 || !targets0.has(b.id)) return;
@@ -322,24 +361,24 @@ function App() {
       const now = performance.now();
       const t = (now - waveStartRef.current) / 1000;
       const next = { ...bulbStateRef.current };
-      const targets = selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
+      const targets = waveGroup ? waveGroup.ids : selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
 
       if (wave.pattern === 'spin') {
-        const offset = ((t / wave.spinPeriod) % 1);
+        const offset = (wave.spinReverse ? -1 : 1) * ((t / wave.spinPeriod) % 1);
         spinRings.forEach((ring) => {
           const n = ring.length;
           const shift = offset * n;
           ring.forEach((id, i) => {
-            const src = (i + shift) % n;
+            const src = ((i + shift) % n + n) % n;
             const lo = Math.floor(src) % n;
             const hi = (lo + 1) % n;
             const frac = src % 1;
             const blo = baseSnapshot[ring[lo]] ?? { pos: 0.5, bright: 0 };
             const bhi = baseSnapshot[ring[hi]] ?? { pos: 0.5, bright: 0 };
-            next[id] = {
-              pos: blo.pos + frac * (bhi.pos - blo.pos),
-              bright: blo.bright + frac * (bhi.bright - blo.bright),
-            };
+            const cur = bulbStateRef.current[id] ?? { pos: 0.5, bright: 0 };
+            next[id] = wave.target === 'brightness'
+              ? { pos: cur.pos, bright: blo.bright + frac * (bhi.bright - blo.bright) }
+              : { pos: blo.pos + frac * (bhi.pos - blo.pos), bright: cur.bright };
           });
         });
       } else {
@@ -657,6 +696,7 @@ function App() {
                   activeGroup={activeGroup}
                   onActivate={activateGroup}
                   onCreate={createGroup}
+                  onDelete={deleteGroup}
                   currentSelectionCount={selection.size}
                 />
               </section>
@@ -681,6 +721,12 @@ function App() {
                 <WavePanel
                   wave={wave}
                   onWave={setWave}
+                  presets={presets}
+                  wavePresetName={wavePresetName}
+                  onWavePresetName={setWavePresetName}
+                  groups={groups}
+                  waveGroupId={waveGroupId}
+                  onWaveGroupId={setWaveGroupId}
                   isPlaying={isPlaying}
                   onPlay={() => {
                     setMode('wave');

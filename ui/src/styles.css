@@ -171,9 +171,19 @@ body {
 .iconbtn:hover {
   background: var(--paper-2);
 }
+.iconbtn[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--paper);
+}
 .iconbtn:disabled {
   color: var(--ink-4);
   cursor: not-allowed;
+}
+.iconbtn.danger {
+  color: oklch(0.55 0.18 25);
+}
+.iconbtn.danger:hover {
+  background: oklch(0.2 0.06 25);
 }
 
 /* Stage */
@@ -398,6 +408,44 @@ body {
 .wave input[type='range']:disabled::-webkit-slider-thumb {
   background: var(--ink-3);
   cursor: default;
+}
+
+.wave-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.wave-select-label {
+  flex: none;
+  font: 500 10px/1 var(--mono);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.wave-select-row .wave-group-select {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.wave-group-select {
+  appearance: none;
+  width: 100%;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  background: var(--paper-3);
+  border: 0.5px solid var(--rule);
+  border-radius: 4px;
+  color: var(--ink-2);
+  font: 500 11px/1 var(--mono);
+  cursor: pointer;
+  outline: none;
+}
+.wave-group-select:disabled {
+  color: var(--ink-3);
+  cursor: default;
+}
+.wave-group-select:focus {
+  border-color: var(--ink-4);
 }
 
 .target-radio {

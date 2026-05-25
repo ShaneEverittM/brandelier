@@ -34,12 +34,14 @@ export type Wave = {
   wavelength: number;
   direction: number;
   spinPeriod: number;
+  spinReverse: boolean;
 };
 
 export type Group = {
   id: string;
   name: string;
   ids: BulbId[];
+  builtin?: boolean;
 };
 
 export type RenderStyle = 'flat' | 'glow' | 'wire';

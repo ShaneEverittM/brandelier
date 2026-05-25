@@ -104,6 +104,7 @@ struct AppState {
 
 const PRESETS_DIR: &str = "presets";
 const SETTINGS_FILE: &str = "presets/settings.json";
+const GROUPS_FILE: &str = "presets/groups.json";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Settings {
@@ -139,7 +140,7 @@ async fn list_presets() -> Result<Json<Vec<String>>> {
         .filter_map(|e| {
             let name = e.ok()?.file_name().into_string().ok()?;
             name.strip_suffix(".json")
-                .filter(|n| *n != "settings")
+                .filter(|n| *n != "settings" && *n != "groups")
                 .map(str::to_owned)
         })
         .collect();
@@ -207,6 +208,17 @@ async fn bulbs(
 #[derive(serde::Deserialize)]
 struct MaxLengthBody {
     inches: f64,
+}
+
+async fn get_groups() -> impl IntoResponse {
+    let text = std::fs::read_to_string(GROUPS_FILE).unwrap_or_else(|_| "[]".to_string());
+    ([(header::CONTENT_TYPE, "application/json")], text)
+}
+
+async fn save_groups(Json(body): Json<serde_json::Value>) -> Result<()> {
+    std::fs::create_dir_all(PRESETS_DIR)?;
+    std::fs::write(GROUPS_FILE, serde_json::to_string_pretty(&body)?)?;
+    Ok(())
 }
 
 async fn get_settings() -> Result<Json<Settings>> {
@@ -291,6 +303,7 @@ async fn main() -> Result<()> {
         .route("/zero", post(zero))
         .route("/presets", get(list_presets).post(save_preset))
         .route("/presets/{name}", get(get_preset).delete(delete_preset))
+        .route("/groups", get(get_groups).post(save_groups))
         .route("/settings", get(get_settings))
         .route("/settings/max-length", post(set_max_length))
         .fallback(|| async { StatusCode::NOT_FOUND });

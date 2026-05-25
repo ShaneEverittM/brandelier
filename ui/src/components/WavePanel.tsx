@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-import type { Wave, WavePattern, WaveTarget } from '../types';
+import type { Group, Wave, WavePattern, WaveTarget } from '../types';
 
 const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
   { id: 'sine', name: 'Wave', icon: <path d="M2 8 Q 9 1 16 8 T 30 8 T 34 8" /> },
@@ -41,12 +41,18 @@ function formatPeriod(s: number): string {
 type Props = {
   wave: Wave;
   onWave: (next: Wave) => void;
+  presets: string[];
+  wavePresetName: string | null;
+  onWavePresetName: (name: string | null) => void;
+  groups: Group[];
+  waveGroupId: string | null;
+  onWaveGroupId: (id: string | null) => void;
   isPlaying: boolean;
   onPlay: () => void;
   onStop: () => void;
 };
 
-export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
+export function WavePanel({ wave, onWave, presets, wavePresetName, onWavePresetName, groups, waveGroupId, onWaveGroupId, isPlaying, onPlay, onStop }: Props) {
   const isSpin = wave.pattern === 'spin';
 
   return (
@@ -54,6 +60,21 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
       <div className="rail-h">
         <h3>Wave Mode</h3>
         <span className="num">{isPlaying ? 'PLAYING' : 'PAUSED'}</span>
+      </div>
+
+      <div className="wave-select-row">
+        <span className="wave-select-label">Preset</span>
+        <select
+          className="wave-group-select"
+          value={wavePresetName ?? ''}
+          disabled={isPlaying}
+          onChange={(e) => onWavePresetName(e.target.value || null)}
+        >
+          <option value="">Current</option>
+          {presets.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
       </div>
 
       <div className="pattern-grid">
@@ -71,40 +92,70 @@ export function WavePanel({ wave, onWave, isPlaying, onPlay, onStop }: Props) {
         ))}
       </div>
 
+      <div className="wave-select-row">
+        <span className="wave-select-label">Group</span>
+        <select
+          className="wave-group-select"
+          value={waveGroupId ?? ''}
+          disabled={isPlaying}
+          onChange={(e) => onWaveGroupId(e.target.value || null)}
+        >
+          <option value="">Current selection</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>{g.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="target-radio">
+        {(['extension', 'brightness'] as WaveTarget[]).map((t) => (
+          <label key={t} className={wave.target === t ? 'active' : ''}>
+            <input
+              type="radio"
+              name="wave-target"
+              value={t}
+              checked={wave.target === t}
+              disabled={isPlaying}
+              onChange={() => onWave({ ...wave, target: t })}
+            />
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+          </label>
+        ))}
+      </div>
+
       {isSpin ? (
         <>
           <div className="row">
             <label>Rotation period</label>
             <span className="value">{formatPeriod(wave.spinPeriod)}</span>
           </div>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.001"
-            value={toQuad(wave.spinPeriod, 5, 3600)}
-            disabled={isPlaying}
-            onChange={(e) => onWave({ ...wave, spinPeriod: Math.round(fromQuad(parseFloat(e.target.value), 5, 3600)) })}
-          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.001"
+              value={toQuad(wave.spinPeriod, 5, 3600)}
+              disabled={isPlaying}
+              style={{ flex: 1 }}
+              onChange={(e) => onWave({ ...wave, spinPeriod: Math.round(fromQuad(parseFloat(e.target.value), 5, 3600)) })}
+            />
+            <button
+              className="iconbtn"
+              disabled={isPlaying}
+              title="Reverse direction"
+              onClick={() => onWave({ ...wave, spinReverse: !wave.spinReverse })}
+            >
+              <svg viewBox="0 0 14 14" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                style={{ transform: wave.spinReverse ? 'scaleX(-1)' : undefined }}>
+                <path d="M11 7A4 4 0 1 0 7 11" />
+                <path d="M7 9.5 L9 11 L7 12.5" />
+              </svg>
+            </button>
+          </div>
         </>
       ) : (
         <>
-          <div className="target-radio">
-            {(['extension', 'brightness'] as WaveTarget[]).map((t) => (
-              <label key={t} className={wave.target === t ? 'active' : ''}>
-                <input
-                  type="radio"
-                  name="wave-target"
-                  value={t}
-                  checked={wave.target === t}
-                  disabled={isPlaying}
-                  onChange={() => onWave({ ...wave, target: t })}
-                />
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </label>
-            ))}
-          </div>
-
           <div className="row">
             <label>Amplitude</label>
             <span className="value">{Math.round(wave.amp * 100)}%</span>
