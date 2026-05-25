@@ -101,8 +101,8 @@ function App() {
     }, 300);
     return () => clearTimeout(id);
   }, [maxLength]);
-  const [wave, setWave] = useState<Wave>({ pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false });
-  const [waveGroupId, setWaveGroupId] = useState<string | null>(null);
+  const defaultWave: Wave = { pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false, groupId: 'g0' };
+  const [waves, setWaves] = useState<Wave[]>([defaultWave]);
   const [wavePosPresetName, setWavePosPresetName] = useState<string | null>(null);
   const [waveBrightPresetName, setWaveBrightPresetName] = useState<string | null>(null);
   const wavePosSnapshotRef = useRef<Record<string, { pos: number }> | null>(null);
@@ -422,65 +422,80 @@ function App() {
     let raf = 0;
     let lastPush = 0;
     let waveController: AbortController | null = null;
-    // Per-ring ordered lists for spin interpolation (ring 0 excluded).
-    // BULBS is already in ringIndex order so no additional sorting is needed.
-    const waveGroup = waveGroupId ? groups.find((g) => g.id === waveGroupId) : null;
-    const targets0 = new Set(
-      waveGroup ? waveGroup.ids : selection.size > 0 ? [...selection] : BULBS.map((b) => b.id),
-    );
-    const spinRings = new Map<number, string[]>();
-    BULBS.forEach((b) => {
-      if (b.ring === 0 || !targets0.has(b.id)) return;
-      const list = spinRings.get(b.ring) ?? [];
-      list.push(b.id);
-      spinRings.set(b.ring, list);
-    });
 
     const tick = () => {
       const now = performance.now();
       const t = (now - waveStartRef.current) / 1000;
-      const next = { ...bulbStateRef.current };
-      const targets = waveGroup ? waveGroup.ids : selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
 
-      if (wave.pattern === 'spin') {
-        const offset = (wave.spinReverse ? -1 : 1) * ((t / wave.spinPeriod) % 1);
-        spinRings.forEach((ring) => {
-          const n = ring.length;
-          const shift = offset * n;
-          ring.forEach((id, i) => {
-            const src = ((i + shift) % n + n) % n;
-            const lo = Math.floor(src) % n;
-            const hi = (lo + 1) % n;
-            const frac = src % 1;
-            const blo = baseSnapshot[ring[lo]] ?? { pos: 0.5, bright: 0 };
-            const bhi = baseSnapshot[ring[hi]] ?? { pos: 0.5, bright: 0 };
-            const cur = bulbStateRef.current[id] ?? { pos: 0.5, bright: 0 };
-            next[id] = wave.target === 'brightness'
-              ? { pos: cur.pos, bright: blo.bright + frac * (bhi.bright - blo.bright) }
-              : { pos: blo.pos + frac * (bhi.pos - blo.pos), bright: cur.bright };
+      // Accumulate additive offsets from each wave
+      const posOff: Record<string, number> = {};
+      const brightOff: Record<string, number> = {};
+
+      waves.forEach((w) => {
+        const waveGroup = w.groupId ? groups.find((g) => g.id === w.groupId) : null;
+        const targets = waveGroup
+          ? waveGroup.ids
+          : selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
+
+        if (w.pattern === 'spin') {
+          const spinRings = new Map<number, string[]>();
+          BULBS.forEach((b) => {
+            if (b.ring === 0 || !targets.includes(b.id)) return;
+            const list = spinRings.get(b.ring) ?? [];
+            list.push(b.id);
+            spinRings.set(b.ring, list);
           });
-        });
-      } else {
-        targets.forEach((id) => {
-          const b = BULBS.find((x) => x.id === id);
-          if (!b) return;
-          const base = baseSnapshot[id] || { pos: 0.5, bright: 0.7 };
-          const dir = (wave.direction * Math.PI) / 180;
-          const k = (2 * Math.PI) / wave.wavelength / 5;
-          const phaseOffset =
-            wave.pattern === 'ripple'
-              ? Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3) * k
-              : (b.x3 * Math.cos(dir) + b.z3 * Math.sin(dir)) * k;
-          const omega = 2 * Math.PI * wave.speed * 0.04;
-          const v = Math.sin(omega * t - phaseOffset);
-          const offset = v * wave.amp * 0.4;
-          if (wave.target === 'brightness') {
-            next[id] = { pos: base.pos, bright: Math.max(0, Math.min(1, base.bright + offset)) };
-          } else {
-            next[id] = { pos: Math.max(0, Math.min(1, base.pos + offset)), bright: base.bright };
-          }
-        });
-      }
+          const rotOffset = (w.spinReverse ? -1 : 1) * ((t / w.spinPeriod) % 1);
+          spinRings.forEach((ring) => {
+            const n = ring.length;
+            const shift = rotOffset * n;
+            ring.forEach((id, i) => {
+              const src = ((i + shift) % n + n) % n;
+              const lo = Math.floor(src) % n;
+              const hi = (lo + 1) % n;
+              const frac = src - Math.floor(src);
+              const blo = baseSnapshot[ring[lo]] ?? { pos: 0.5, bright: 0 };
+              const bhi = baseSnapshot[ring[hi]] ?? { pos: 0.5, bright: 0 };
+              const base_i = baseSnapshot[id] ?? { pos: 0.5, bright: 0 };
+              if (w.target === 'brightness') {
+                brightOff[id] = (brightOff[id] ?? 0) + (blo.bright + frac * (bhi.bright - blo.bright) - base_i.bright);
+              } else {
+                posOff[id] = (posOff[id] ?? 0) + (blo.pos + frac * (bhi.pos - blo.pos) - base_i.pos);
+              }
+            });
+          });
+        } else {
+          targets.forEach((id) => {
+            const b = BULBS.find((x) => x.id === id);
+            if (!b) return;
+            const dir = (w.direction * Math.PI) / 180;
+            const k = (2 * Math.PI) / w.wavelength / 5;
+            const phaseOffset =
+              w.pattern === 'ripple'
+                ? Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3) * k
+                : (b.x3 * Math.cos(dir) + b.z3 * Math.sin(dir)) * k;
+            const omega = 2 * Math.PI * w.speed * 0.04;
+            const v = Math.sin(omega * t - phaseOffset);
+            const o = v * w.amp * 0.4;
+            if (w.target === 'brightness') {
+              brightOff[id] = (brightOff[id] ?? 0) + o;
+            } else {
+              posOff[id] = (posOff[id] ?? 0) + o;
+            }
+          });
+        }
+      });
+
+      // Apply accumulated offsets to base snapshot
+      const next = { ...bulbStateRef.current };
+      BULBS.forEach((b) => {
+        const base = baseSnapshot[b.id] ?? { pos: 0.5, bright: 0 };
+        next[b.id] = {
+          pos: Math.max(0, Math.min(1, base.pos + (posOff[b.id] ?? 0))),
+          bright: Math.max(0, Math.min(1, base.bright + (brightOff[b.id] ?? 0))),
+        };
+      });
+
       setBulbState(next);
       if (now - lastPush >= 1000 / 30) {
         lastPush = now;
@@ -499,7 +514,7 @@ function App() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, wave]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, waves]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard
   useEffect(() => {
@@ -823,10 +838,10 @@ function App() {
             )}
 
             {mode === 'wave' && (
-              <CollapsibleSection title="Wave Mode">
+              <section className="rail-section">
                 <WavePanel
-                  wave={wave}
-                  onWave={setWave}
+                  waves={waves}
+                  onWaves={setWaves}
                   positionPresets={positionPresets}
                   brightnessPresets={brightnessPresets}
                   wavePosPresetName={wavePosPresetName}
@@ -834,8 +849,6 @@ function App() {
                   waveBrightPresetName={waveBrightPresetName}
                   onWaveBrightPresetName={setWaveBrightPresetName}
                   groups={groups}
-                  waveGroupId={waveGroupId}
-                  onWaveGroupId={setWaveGroupId}
                   isPlaying={isPlaying}
                   onPlay={() => {
                     setMode('wave');
@@ -843,7 +856,7 @@ function App() {
                   }}
                   onStop={() => setIsPlaying(false)}
                 />
-              </CollapsibleSection>
+              </section>
             )}
           </>
         )}

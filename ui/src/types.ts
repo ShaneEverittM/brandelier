@@ -37,6 +37,7 @@ export type Wave = {
   direction: number;
   spinPeriod: number;
   spinReverse: boolean;
+  groupId: string | null;
 };
 
 export type Group = {
