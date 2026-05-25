@@ -481,6 +481,9 @@ function App() {
               <kbd>drag ↔</kbd> brightness
             </span>
             <span>
+              <kbd>ctrl</kbd>+precise drag
+            </span>
+            <span>
               <kbd>shift</kbd>+click multi
             </span>
             <span>
@@ -582,43 +585,7 @@ function App() {
         )}
       </aside>
 
-      {/* Bottom action bar */}
-      <footer className="actionbar">
-        <div className="group">
-          <button className="transport-btn">Save config</button>
-          <button className="transport-btn">Load</button>
-          <button className="transport-btn">Schedule</button>
-        </div>
 
-        <div className="group">
-          <span className="connection">
-            <span className="dot"></span>
-            Live · ws://chandelier.local
-          </span>
-          <div className="divider"></div>
-          {isPlaying ? (
-            <button className="transport-btn stop" onClick={() => setIsPlaying(false)}>
-              <svg viewBox="0 0 12 12" fill="currentColor">
-                <rect x="2" y="2" width="8" height="8" rx="1" />
-              </svg>
-              Stop
-            </button>
-          ) : (
-            <button
-              className="transport-btn primary"
-              onClick={() => {
-                setMode('wave');
-                setIsPlaying(true);
-              }}
-            >
-              <svg viewBox="0 0 12 12" fill="currentColor">
-                <path d="M2 1 L 11 6 L 2 11 Z" />
-              </svg>
-              Run wave
-            </button>
-          )}
-        </div>
-      </footer>
     </div>
   );
 }
