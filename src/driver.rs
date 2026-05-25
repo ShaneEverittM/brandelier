@@ -260,6 +260,28 @@ impl Message<SetAll> for Driver {
     }
 }
 
+pub struct ZeroSome {
+    pub bulbs: HashMap<BulbId, BulbCommand>,
+}
+
+impl Message<ZeroSome> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, msg: ZeroSome, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for (id, cmd) in msg.bulbs {
+            let Some(bulb) = state.bulbs.get_mut(&id) else {
+                continue;
+            };
+            let extension = cmd.pos.clamp(0.0, 1.0) * MAX_EXTENSION;
+            bulb.write(Command::Zero { extension }).await?;
+        }
+        self.mode = Mode::Idle { state };
+        self.notify_waiters(Ok(()));
+        Ok(())
+    }
+}
+
 pub struct Stop;
 
 impl Message<Stop> for Driver {

@@ -25,6 +25,7 @@ use crate::driver::Driver;
 use crate::driver::SetAll;
 use crate::driver::Stop;
 use crate::driver::Zero;
+use crate::driver::ZeroSome;
 use crate::i2c::Bus;
 use crate::topology::BulbId;
 use crate::topology::BulbSlot;
@@ -61,6 +62,9 @@ pub enum Error {
     SetAllError(#[from] SendError<SetAll, driver::Error>),
 
     #[error(transparent)]
+    ZeroSomeError(#[from] SendError<ZeroSome, driver::Error>),
+
+    #[error(transparent)]
     Io(#[from] io::Error),
 }
 
@@ -86,6 +90,14 @@ struct AppState {
 
 async fn topology(State(AppState { topology, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
     Json(topology::bulbs(&topology))
+}
+
+async fn zero(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(bulbs): Json<HashMap<BulbId, BulbCommand>>,
+) -> Result<()> {
+    driver.ask(ZeroSome { bulbs }).await?;
+    Ok(())
 }
 
 async fn bulbs(
@@ -155,6 +167,7 @@ async fn main() -> Result<()> {
     let api = Router::new()
         .route("/topology", get(topology))
         .route("/bulbs", post(bulbs))
+        .route("/zero", post(zero))
         .fallback(|| async { StatusCode::NOT_FOUND });
 
     let router = Router::new()

@@ -387,13 +387,16 @@ function App() {
             bulbState={bulbState}
             onClear={handleClear}
             onZero={() => {
-              pushHistory();
-              setBulbState((cur) => {
-                const next = { ...cur };
-                selection.forEach((id) => {
-                  next[id] = { pos: 0.5, bright: 0 };
-                });
-                return next;
+              const payload: Record<string, { pos: number; bright: number }> = {};
+              selection.forEach((id) => {
+                payload[id] = bulbState[id] ?? { pos: 0, bright: 0 };
+              });
+              void fetch('/api/zero', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              }).catch((err) => {
+                console.error('Failed to send zero command:', err);
               });
             }}
           />
