@@ -23,6 +23,8 @@ export type BulbStatusMap = Record<BulbId, BulbStatusEntry>;
 
 export type Camera = { yaw: number; elevation: number };
 
+export type PresetKind = 'position' | 'brightness';
+
 export type WavePattern = 'sine' | 'ripple' | 'spin';
 export type WaveTarget = 'extension' | 'brightness';
 
@@ -46,7 +48,7 @@ export type Group = {
 
 export type RenderStyle = 'flat' | 'glow' | 'wire';
 
-export type Mode = 'manual' | 'presets' | 'wave' | 'schedule' | 'settings';
+export type Mode = 'presets' | 'wave' | 'schedule' | 'settings';
 
 export type DragAxis = 'x' | 'y' | null;
 export type DragDelta = { dx: number; dy: number; axis: DragAxis; ctrl: boolean };

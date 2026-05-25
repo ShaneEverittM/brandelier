@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { CameraWidget } from './components/CameraWidget';
 import { Chandelier } from './components/Chandelier';
+import { CollapsibleSection } from './components/CollapsibleSection';
 import { GroupsPanel } from './components/GroupsPanel';
 import { Inspector } from './components/Inspector';
 import { PresetsPanel } from './components/PresetsPanel';
 import { WavePanel } from './components/WavePanel';
 import { useOrbitDrag } from './hooks/useOrbitDrag.ts';
 import { BULBS } from './topology';
-import type { BulbId, BulbState, BulbStatusMap, Camera, DragDelta, Group, Mode, RenderStyle, Wave } from './types';
+import type { BulbId, BulbState, BulbStatusMap, Camera, DragDelta, Group, Mode, PresetKind, RenderStyle, Wave } from './types';
 
 const RENDER_STYLE: RenderStyle = 'glow';
 const SHOW_HELP = true;
@@ -34,12 +35,13 @@ function App() {
   const [bulbStatus, setBulbStatus] = useState<BulbStatusMap>({});
   const [sceneReady, setSceneReady] = useState(false);
   const [selection, setSelection] = useState<Set<BulbId>>(new Set());
-  const [presets, setPresets] = useState<string[]>([]);
-  const [previewingPreset, setPreviewingPreset] = useState<string | null>(null);
+  const [positionPresets, setPositionPresets] = useState<string[]>([]);
+  const [brightnessPresets, setBrightnessPresets] = useState<string[]>([]);
+  const [previewingPreset, setPreviewingPreset] = useState<{ name: string; kind: PresetKind } | null>(null);
   const previewSnapshotRef = useRef<BulbState | null>(null);
   const [history, setHistory] = useState<BulbState[]>([]);
   const [future, setFuture] = useState<BulbState[]>([]);
-  const [mode, setMode] = useState<Mode>('manual');
+  const [mode, setMode] = useState<Mode>('presets');
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([
     { id: 'g0', name: 'All', ids: BULBS.map((b) => b.id), builtin: true },
@@ -70,14 +72,21 @@ function App() {
     return () => clearTimeout(id);
   }, [groups]);
 
+  const [dimmer, setDimmer] = useState(1.0);
+  const dimmerRef = useRef(1.0);
+
   const [maxLength, setMaxLength] = useState(37);
   const maxLengthSynced = useRef(false);
   useEffect(() => {
     fetch('/api/settings')
-      .then((r) => r.json() as Promise<{ max_length_in: number }>)
+      .then((r) => r.json() as Promise<{ max_length_in: number; dimmer?: number }>)
       .then((data) => {
         maxLengthSynced.current = true;
         setMaxLength(data.max_length_in);
+        if (data.dimmer !== undefined) {
+          dimmerRef.current = data.dimmer;
+          setDimmer(data.dimmer);
+        }
       })
       .catch(console.error);
   }, []);
@@ -94,15 +103,24 @@ function App() {
   }, [maxLength]);
   const [wave, setWave] = useState<Wave>({ pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false });
   const [waveGroupId, setWaveGroupId] = useState<string | null>(null);
-  const [wavePresetName, setWavePresetName] = useState<string | null>(null);
-  const wavePresetSnapshotRef = useRef<BulbState | null>(null);
+  const [wavePosPresetName, setWavePosPresetName] = useState<string | null>(null);
+  const [waveBrightPresetName, setWaveBrightPresetName] = useState<string | null>(null);
+  const wavePosSnapshotRef = useRef<Record<string, { pos: number }> | null>(null);
+  const waveBrightSnapshotRef = useRef<Record<string, { bright: number }> | null>(null);
   useEffect(() => {
-    if (!wavePresetName) { wavePresetSnapshotRef.current = null; return; }
-    fetch(`/api/presets/${encodeURIComponent(wavePresetName)}`)
-      .then((r) => r.json() as Promise<BulbState>)
-      .then((data) => { wavePresetSnapshotRef.current = data; })
-      .catch(() => { wavePresetSnapshotRef.current = null; });
-  }, [wavePresetName]);
+    if (!wavePosPresetName) { wavePosSnapshotRef.current = null; return; }
+    fetch(`/api/presets/position/${encodeURIComponent(wavePosPresetName)}`)
+      .then((r) => r.json() as Promise<Record<string, { pos: number }>>)
+      .then((data) => { wavePosSnapshotRef.current = data; })
+      .catch(() => { wavePosSnapshotRef.current = null; });
+  }, [wavePosPresetName]);
+  useEffect(() => {
+    if (!waveBrightPresetName) { waveBrightSnapshotRef.current = null; return; }
+    fetch(`/api/presets/brightness/${encodeURIComponent(waveBrightPresetName)}`)
+      .then((r) => r.json() as Promise<Record<string, { bright: number }>>)
+      .then((data) => { waveBrightSnapshotRef.current = data; })
+      .catch(() => { waveBrightSnapshotRef.current = null; });
+  }, [waveBrightPresetName]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
   const [orbiting, setOrbiting] = useState(false);
@@ -119,6 +137,7 @@ function App() {
   useEffect(() => {
     bulbStateRef.current = bulbState;
   }, [bulbState]);
+  const dimmerAbortRef = useRef<AbortController | null>(null);
 
   // Poll /api/status on mount (sync pos) then every second (errors / zeroing)
   const initialSyncDone = useRef(false);
@@ -153,40 +172,84 @@ function App() {
     setFuture([]);
   }, [bulbState]);
 
+  useEffect(() => { dimmerRef.current = dimmer; }, [dimmer]);
+
+  const dimState = (state: BulbState): BulbState => {
+    const d = dimmerRef.current;
+    if (d === 1) return state;
+    const out: BulbState = {};
+    for (const id in state) out[id] = { ...state[id], bright: state[id].bright * d };
+    return out;
+  };
+
   const pushBulbs = (state: BulbState) => {
     void fetch('/api/bulbs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state),
+      body: JSON.stringify(dimState(state)),
     }).catch((err) => console.error('Failed to push bulb state:', err));
   };
 
   // Presets
-  const fetchPresets = () => {
-    fetch('/api/presets')
+  const fetchPositionPresets = () => {
+    fetch('/api/presets/position')
       .then((r) => r.json() as Promise<string[]>)
-      .then(setPresets)
+      .then(setPositionPresets)
+      .catch(console.error);
+  };
+  const fetchBrightnessPresets = () => {
+    fetch('/api/presets/brightness')
+      .then((r) => r.json() as Promise<string[]>)
+      .then(setBrightnessPresets)
       .catch(console.error);
   };
 
   useEffect(() => {
-    if (mode === 'presets' || mode === 'wave') fetchPresets();
+    if (mode === 'presets' || mode === 'wave') {
+      fetchPositionPresets();
+      fetchBrightnessPresets();
+    }
     if (mode !== 'presets' && previewSnapshotRef.current) {
       setBulbState(previewSnapshotRef.current);
       previewSnapshotRef.current = null;
       setPreviewingPreset(null);
     }
-  }, [mode]);
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const previewPreset = (name: string) => {
+  const previewPositionPreset = (name: string) => {
     if (!previewSnapshotRef.current) {
       previewSnapshotRef.current = bulbStateRef.current;
     }
-    fetch(`/api/presets/${encodeURIComponent(name)}`)
-      .then((r) => r.json() as Promise<BulbState>)
-      .then((state) => {
-        setBulbState(state);
-        setPreviewingPreset(name);
+    fetch(`/api/presets/position/${encodeURIComponent(name)}`)
+      .then((r) => r.json() as Promise<Record<string, { pos: number }>>)
+      .then((data) => {
+        setBulbState((cur) => {
+          const next = { ...cur };
+          Object.entries(data).forEach(([id, { pos }]) => {
+            if (id in next) next[id] = { ...next[id], pos };
+          });
+          return next;
+        });
+        setPreviewingPreset({ name, kind: 'position' });
+      })
+      .catch(console.error);
+  };
+
+  const previewBrightnessPreset = (name: string) => {
+    if (!previewSnapshotRef.current) {
+      previewSnapshotRef.current = bulbStateRef.current;
+    }
+    fetch(`/api/presets/brightness/${encodeURIComponent(name)}`)
+      .then((r) => r.json() as Promise<Record<string, { bright: number }>>)
+      .then((data) => {
+        setBulbState((cur) => {
+          const next = { ...cur };
+          Object.entries(data).forEach(([id, { bright }]) => {
+            if (id in next) next[id] = { ...next[id], bright };
+          });
+          return next;
+        });
+        setPreviewingPreset({ name, kind: 'brightness' });
       })
       .catch(console.error);
   };
@@ -211,22 +274,35 @@ function App() {
     pushBulbs(state);
   };
 
-  const savePreset = (name: string) => {
-    void fetch('/api/presets', {
+  const savePositionPreset = (name: string) => {
+    const state: Record<string, { pos: number }> = {};
+    Object.entries(bulbStateRef.current).forEach(([id, s]) => { state[id] = { pos: s.pos }; });
+    void fetch('/api/presets/position', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, state: bulbStateRef.current }),
-    })
-      .then(() => fetchPresets())
+      body: JSON.stringify({ name, state }),
+    }).then(fetchPositionPresets).catch(console.error);
+  };
+
+  const saveBrightnessPreset = (name: string) => {
+    const state: Record<string, { bright: number }> = {};
+    Object.entries(bulbStateRef.current).forEach(([id, s]) => { state[id] = { bright: s.bright }; });
+    void fetch('/api/presets/brightness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, state }),
+    }).then(fetchBrightnessPresets).catch(console.error);
+  };
+
+  const deletePositionPreset = (name: string) => {
+    void fetch(`/api/presets/position/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      .then(() => { cancelPreview(); fetchPositionPresets(); })
       .catch(console.error);
   };
 
-  const deletePreset = (name: string) => {
-    void fetch(`/api/presets/${encodeURIComponent(name)}`, { method: 'DELETE' })
-      .then(() => {
-        cancelPreview();
-        fetchPresets();
-      })
+  const deleteBrightnessPreset = (name: string) => {
+    void fetch(`/api/presets/brightness/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      .then(() => { cancelPreview(); fetchBrightnessPresets(); })
       .catch(console.error);
   };
 
@@ -307,13 +383,7 @@ function App() {
     const moved = dragSnapshotRef.current !== null;
     dragSnapshotRef.current = null;
     if (!moved) return;
-    void fetch('/api/bulbs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(bulbStateRef.current),
-    }).catch((err) => {
-      console.error('Failed to push bulb state:', err);
-    });
+    pushBulbs(bulbStateRef.current);
   };
 
   // Groups
@@ -339,7 +409,16 @@ function App() {
   useEffect(() => {
     if (!isPlaying) return;
     waveStartRef.current = performance.now();
-    const baseSnapshot = wavePresetSnapshotRef.current ?? { ...bulbState };
+    const posSource = wavePosSnapshotRef.current;
+    const brightSource = waveBrightSnapshotRef.current;
+    const baseSnapshot: BulbState = {};
+    BULBS.forEach((b) => {
+      const cur = bulbStateRef.current[b.id] ?? { pos: 0.5, bright: 0 };
+      baseSnapshot[b.id] = {
+        pos: posSource ? (posSource[b.id]?.pos ?? cur.pos) : cur.pos,
+        bright: brightSource ? (brightSource[b.id]?.bright ?? cur.bright) : cur.bright,
+      };
+    });
     let raf = 0;
     let lastPush = 0;
     let waveController: AbortController | null = null;
@@ -410,7 +489,7 @@ function App() {
         void fetch('/api/bulbs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(next),
+          body: JSON.stringify(dimState(next)),
           signal: waveController.signal,
         }).catch((err: Error) => {
           if (err.name !== 'AbortError') console.error('Failed to push bulb state:', err);
@@ -454,16 +533,12 @@ function App() {
       });
       return next;
     });
-    const payload: Record<string, { pos: number; bright: number }> = {};
+    const payload: BulbState = {};
     selection.forEach((id) => {
       const cur = bulbStateRef.current[id];
       if (cur) payload[id] = { ...cur, bright: b };
     });
-    void fetch('/api/bulbs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }).catch((err) => console.error('Failed to push brightness:', err));
+    pushBulbs(payload);
   };
 
   return (
@@ -477,9 +552,6 @@ function App() {
         </div>
 
         <nav className="modebar" role="tablist">
-          <button role="tab" aria-pressed={mode === 'manual'} onClick={() => setMode('manual')}>
-            Manual
-          </button>
           <button role="tab" aria-pressed={mode === 'presets'} onClick={() => setMode('presets')}>
             Presets
           </button>
@@ -539,6 +611,43 @@ function App() {
           </button>
         </div>
       </header>
+
+      {/* Dimmer strip */}
+      <aside className="dimmer-strip">
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={dimmer}
+          onChange={(e) => {
+            const d = parseFloat(e.target.value);
+            dimmerRef.current = d;
+            setDimmer(d);
+            if (!isPlaying) {
+              dimmerAbortRef.current?.abort();
+              dimmerAbortRef.current = new AbortController();
+              void fetch('/api/bulbs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dimState(bulbStateRef.current)),
+                signal: dimmerAbortRef.current.signal,
+              }).catch((err: Error) => {
+                if (err.name !== 'AbortError') console.error('Failed to push dimmer state:', err);
+              });
+            }
+          }}
+          onPointerUp={(e) => {
+            const d = parseFloat((e.target as HTMLInputElement).value);
+            void fetch('/api/settings/dimmer', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dimmer: d }),
+            }).catch(console.error);
+          }}
+        />
+        <span className="dimmer-label">Dim</span>
+      </aside>
 
       {/* Stage */}
       <main
@@ -603,10 +712,7 @@ function App() {
       {/* Right rail */}
       <aside className="rail">
         {mode === 'settings' && (
-          <section className="rail-section">
-            <div className="rail-h">
-              <h3>Settings</h3>
-            </div>
+          <CollapsibleSection title="Settings">
             <div className="settings-row">
               <label className="settings-label">
                 Max cord length
@@ -636,16 +742,12 @@ function App() {
                 <span>100 in</span>
               </div>
             </div>
-          </section>
+          </CollapsibleSection>
         )}
 
         {mode !== 'settings' && (
           <>
-            <section className="rail-section">
-              <div className="rail-h">
-                <h3>Selection</h3>
-                <span className="num">{selection.size} / 19</span>
-              </div>
+            <CollapsibleSection title="Selection">
               <Inspector
                 selectedIds={selection}
                 bulbState={bulbState}
@@ -667,30 +769,18 @@ function App() {
               />
               {selection.size > 0 && (
                 <div className="action-row">
-                  <button className="btn" onClick={() => setBrightForSelection(0)}>
-                    Off
-                  </button>
-                  <button className="btn" onClick={() => setBrightForSelection(0.05)}>
-                    5%
-                  </button>
-                  <button className="btn" onClick={() => setBrightForSelection(0.15)}>
-                    15%
-                  </button>
-                  <button className="btn" onClick={() => setBrightForSelection(0.25)}>
-                    25%
-                  </button>
-                  <button className="btn" onClick={() => setBrightForSelection(0.5)}>
-                    50%
-                  </button>
-                  <button className="btn" onClick={() => setBrightForSelection(1)}>
-                    Full
-                  </button>
+                  <button className="btn" onClick={() => setBrightForSelection(0)}>Off</button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.05)}>5%</button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.15)}>15%</button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.25)}>25%</button>
+                  <button className="btn" onClick={() => setBrightForSelection(0.5)}>50%</button>
+                  <button className="btn" onClick={() => setBrightForSelection(1)}>Full</button>
                 </div>
               )}
-            </section>
+            </CollapsibleSection>
 
             {mode !== 'wave' && (
-              <section className="rail-section">
+              <CollapsibleSection title="Groups">
                 <GroupsPanel
                   groups={groups}
                   activeGroup={activeGroup}
@@ -699,31 +789,50 @@ function App() {
                   onDelete={deleteGroup}
                   currentSelectionCount={selection.size}
                 />
-              </section>
+              </CollapsibleSection>
             )}
 
             {mode === 'presets' && (
-              <section className="rail-section">
+              <CollapsibleSection title="Position Presets">
                 <PresetsPanel
-                  presets={presets}
+                  kind="position"
+                  presets={positionPresets}
                   previewing={previewingPreset}
-                  onPreview={previewPreset}
+                  onPreview={previewPositionPreset}
                   onCancelPreview={cancelPreview}
                   onLoad={loadPreset}
-                  onSave={savePreset}
-                  onDelete={deletePreset}
+                  onSave={savePositionPreset}
+                  onDelete={deletePositionPreset}
                 />
-              </section>
+              </CollapsibleSection>
+            )}
+
+            {mode === 'presets' && (
+              <CollapsibleSection title="Brightness Presets">
+                <PresetsPanel
+                  kind="brightness"
+                  presets={brightnessPresets}
+                  previewing={previewingPreset}
+                  onPreview={previewBrightnessPreset}
+                  onCancelPreview={cancelPreview}
+                  onLoad={loadPreset}
+                  onSave={saveBrightnessPreset}
+                  onDelete={deleteBrightnessPreset}
+                />
+              </CollapsibleSection>
             )}
 
             {mode === 'wave' && (
-              <section className="rail-section">
+              <CollapsibleSection title="Wave Mode">
                 <WavePanel
                   wave={wave}
                   onWave={setWave}
-                  presets={presets}
-                  wavePresetName={wavePresetName}
-                  onWavePresetName={setWavePresetName}
+                  positionPresets={positionPresets}
+                  brightnessPresets={brightnessPresets}
+                  wavePosPresetName={wavePosPresetName}
+                  onWavePosPresetName={setWavePosPresetName}
+                  waveBrightPresetName={waveBrightPresetName}
+                  onWaveBrightPresetName={setWaveBrightPresetName}
                   groups={groups}
                   waveGroupId={waveGroupId}
                   onWaveGroupId={setWaveGroupId}
@@ -734,7 +843,7 @@ function App() {
                   }}
                   onStop={() => setIsPlaying(false)}
                 />
-              </section>
+              </CollapsibleSection>
             )}
           </>
         )}

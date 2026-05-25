@@ -41,9 +41,12 @@ function formatPeriod(s: number): string {
 type Props = {
   wave: Wave;
   onWave: (next: Wave) => void;
-  presets: string[];
-  wavePresetName: string | null;
-  onWavePresetName: (name: string | null) => void;
+  positionPresets: string[];
+  brightnessPresets: string[];
+  wavePosPresetName: string | null;
+  onWavePosPresetName: (name: string | null) => void;
+  waveBrightPresetName: string | null;
+  onWaveBrightPresetName: (name: string | null) => void;
   groups: Group[];
   waveGroupId: string | null;
   onWaveGroupId: (id: string | null) => void;
@@ -52,26 +55,36 @@ type Props = {
   onStop: () => void;
 };
 
-export function WavePanel({ wave, onWave, presets, wavePresetName, onWavePresetName, groups, waveGroupId, onWaveGroupId, isPlaying, onPlay, onStop }: Props) {
+export function WavePanel({ wave, onWave, positionPresets, brightnessPresets, wavePosPresetName, onWavePosPresetName, waveBrightPresetName, onWaveBrightPresetName, groups, waveGroupId, onWaveGroupId, isPlaying, onPlay, onStop }: Props) {
   const isSpin = wave.pattern === 'spin';
 
   return (
     <div className="wave">
-      <div className="rail-h">
-        <h3>Wave Mode</h3>
-        <span className="num">{isPlaying ? 'PLAYING' : 'PAUSED'}</span>
+      <div className="wave-select-row">
+        <span className="wave-select-label">Position preset</span>
+        <select
+          className="wave-group-select"
+          value={wavePosPresetName ?? ''}
+          disabled={isPlaying}
+          onChange={(e) => onWavePosPresetName(e.target.value || null)}
+        >
+          <option value="">Current</option>
+          {positionPresets.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
       </div>
 
       <div className="wave-select-row">
-        <span className="wave-select-label">Preset</span>
+        <span className="wave-select-label">Brightness preset</span>
         <select
           className="wave-group-select"
-          value={wavePresetName ?? ''}
+          value={waveBrightPresetName ?? ''}
           disabled={isPlaying}
-          onChange={(e) => onWavePresetName(e.target.value || null)}
+          onChange={(e) => onWaveBrightPresetName(e.target.value || null)}
         >
           <option value="">Current</option>
-          {presets.map((name) => (
+          {brightnessPresets.map((name) => (
             <option key={name} value={name}>{name}</option>
           ))}
         </select>

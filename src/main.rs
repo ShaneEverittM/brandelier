@@ -102,19 +102,26 @@ struct AppState {
     topology: config::Topology,
 }
 
-const PRESETS_DIR: &str = "presets";
+const POSITION_PRESETS_DIR: &str = "presets/position";
+const BRIGHTNESS_PRESETS_DIR: &str = "presets/brightness";
 const SETTINGS_FILE: &str = "presets/settings.json";
 const GROUPS_FILE: &str = "presets/groups.json";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Settings {
     max_length_in: f64,
+    #[serde(default = "Settings::default_dimmer")]
+    dimmer: f64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { max_length_in: 37.0 }
+        Self { max_length_in: 37.0, dimmer: 1.0 }
     }
+}
+
+impl Settings {
+    fn default_dimmer() -> f64 { 1.0 }
 }
 
 fn load_settings() -> Settings {
@@ -124,24 +131,32 @@ fn load_settings() -> Settings {
         .unwrap_or_default()
 }
 
-fn safe_preset_path(name: &str) -> Option<PathBuf> {
+fn preset_dir(kind: &str) -> Option<&'static str> {
+    match kind {
+        "position" => Some(POSITION_PRESETS_DIR),
+        "brightness" => Some(BRIGHTNESS_PRESETS_DIR),
+        _ => None,
+    }
+}
+
+fn safe_preset_path(dir: &str, name: &str) -> Option<PathBuf> {
     if name.is_empty() || name.contains(['/', '\\', '.']) {
         return None;
     }
-    Some(Path::new(PRESETS_DIR).join(format!("{name}.json")))
+    Some(Path::new(dir).join(format!("{name}.json")))
 }
 
-async fn list_presets() -> Result<Json<Vec<String>>> {
-    let dir = Path::new(PRESETS_DIR);
+async fn list_presets_kind(AxumPath(kind): AxumPath<String>) -> Result<Json<Vec<String>>> {
+    let dir = preset_dir(&kind)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset kind"))?;
+    let dir = Path::new(dir);
     if !dir.exists() {
         return Ok(Json(vec![]));
     }
     let mut names: Vec<String> = std::fs::read_dir(dir)?
         .filter_map(|e| {
             let name = e.ok()?.file_name().into_string().ok()?;
-            name.strip_suffix(".json")
-                .filter(|n| *n != "settings" && *n != "groups")
-                .map(str::to_owned)
+            name.strip_suffix(".json").map(str::to_owned)
         })
         .collect();
     names.sort();
@@ -151,28 +166,39 @@ async fn list_presets() -> Result<Json<Vec<String>>> {
 #[derive(serde::Deserialize)]
 struct SavePresetBody {
     name: String,
-    state: HashMap<BulbId, BulbCommand>,
+    state: serde_json::Value,
 }
 
-async fn save_preset(Json(body): Json<SavePresetBody>) -> Result<()> {
-    let path = safe_preset_path(&body.name)
+async fn save_preset_kind(
+    AxumPath(kind): AxumPath<String>,
+    Json(body): Json<SavePresetBody>,
+) -> Result<()> {
+    let dir = preset_dir(&kind)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset kind"))?;
+    let path = safe_preset_path(dir, &body.name)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
-    std::fs::create_dir_all(PRESETS_DIR)?;
+    std::fs::create_dir_all(dir)?;
     std::fs::write(path, serde_json::to_string_pretty(&body.state)?)?;
     Ok(())
 }
 
-async fn get_preset(
-    AxumPath(name): AxumPath<String>,
-) -> Result<Json<HashMap<BulbId, BulbCommand>>> {
-    let path = safe_preset_path(&name)
+async fn get_preset_kind(
+    AxumPath((kind, name)): AxumPath<(String, String)>,
+) -> Result<Json<serde_json::Value>> {
+    let dir = preset_dir(&kind)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset kind"))?;
+    let path = safe_preset_path(dir, &name)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
     let text = std::fs::read_to_string(path)?;
     Ok(Json(serde_json::from_str(&text)?))
 }
 
-async fn delete_preset(AxumPath(name): AxumPath<String>) -> Result<()> {
-    let path = safe_preset_path(&name)
+async fn delete_preset_kind(
+    AxumPath((kind, name)): AxumPath<(String, String)>,
+) -> Result<()> {
+    let dir = preset_dir(&kind)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset kind"))?;
+    let path = safe_preset_path(dir, &name)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
     std::fs::remove_file(path)?;
     Ok(())
@@ -216,7 +242,7 @@ async fn get_groups() -> impl IntoResponse {
 }
 
 async fn save_groups(Json(body): Json<serde_json::Value>) -> Result<()> {
-    std::fs::create_dir_all(PRESETS_DIR)?;
+    std::fs::create_dir_all("presets")?;
     std::fs::write(GROUPS_FILE, serde_json::to_string_pretty(&body)?)?;
     Ok(())
 }
@@ -230,8 +256,23 @@ async fn set_max_length(
     Json(body): Json<MaxLengthBody>,
 ) -> Result<()> {
     driver.ask(ConfigureMaxExt { max_in: body.inches }).await?;
-    std::fs::create_dir_all(PRESETS_DIR)?;
-    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&Settings { max_length_in: body.inches })?)?;
+    let mut settings = load_settings();
+    settings.max_length_in = body.inches;
+    std::fs::create_dir_all("presets")?;
+    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&settings)?)?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct DimmerBody {
+    dimmer: f64,
+}
+
+async fn set_dimmer(Json(body): Json<DimmerBody>) -> Result<()> {
+    let mut settings = load_settings();
+    settings.dimmer = body.dimmer;
+    std::fs::create_dir_all("presets")?;
+    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&settings)?)?;
     Ok(())
 }
 
@@ -301,11 +342,12 @@ async fn main() -> Result<()> {
         .route("/status", get(status))
         .route("/bulbs", post(bulbs))
         .route("/zero", post(zero))
-        .route("/presets", get(list_presets).post(save_preset))
-        .route("/presets/{name}", get(get_preset).delete(delete_preset))
+        .route("/presets/{kind}", get(list_presets_kind).post(save_preset_kind))
+        .route("/presets/{kind}/{name}", get(get_preset_kind).delete(delete_preset_kind))
         .route("/groups", get(get_groups).post(save_groups))
         .route("/settings", get(get_settings))
         .route("/settings/max-length", post(set_max_length))
+        .route("/settings/dimmer", post(set_dimmer))
         .fallback(|| async { StatusCode::NOT_FOUND });
 
     let router = Router::new()

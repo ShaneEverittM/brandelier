@@ -22,11 +22,6 @@ export function GroupsPanel({
   const [name, setName] = useState('');
   return (
     <div className="groups">
-      <div className="rail-h">
-        <h3>Groups</h3>
-        <span className="num">{groups.length} saved</span>
-      </div>
-
       <div className="groups-list">
         {groups.length === 0 && (
           <div className="group-item" style={{ cursor: 'default' }}>
