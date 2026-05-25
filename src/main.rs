@@ -20,8 +20,10 @@ use tracing_subscriber::EnvFilter;
 use validator::ValidationErrors;
 
 use crate::driver::BulbCommand;
+use crate::driver::BulbStatus;
 use crate::driver::Cycle;
 use crate::driver::Driver;
+use crate::driver::ReadAll;
 use crate::driver::SetAll;
 use crate::driver::Stop;
 use crate::driver::Zero;
@@ -65,6 +67,9 @@ pub enum Error {
     ZeroSomeError(#[from] SendError<ZeroSome, driver::Error>),
 
     #[error(transparent)]
+    ReadAllError(#[from] SendError<ReadAll, driver::Error>),
+
+    #[error(transparent)]
     Io(#[from] io::Error),
 }
 
@@ -90,6 +95,13 @@ struct AppState {
 
 async fn topology(State(AppState { topology, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
     Json(topology::bulbs(&topology))
+}
+
+async fn status(
+    State(AppState { driver, .. }): State<AppState>,
+) -> Result<Json<HashMap<BulbId, BulbStatus>>> {
+    let map = driver.ask(ReadAll).await?;
+    Ok(Json(map))
 }
 
 async fn zero(
@@ -166,6 +178,7 @@ async fn main() -> Result<()> {
 
     let api = Router::new()
         .route("/topology", get(topology))
+        .route("/status", get(status))
         .route("/bulbs", post(bulbs))
         .route("/zero", post(zero))
         .fallback(|| async { StatusCode::NOT_FOUND });

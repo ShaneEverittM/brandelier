@@ -8,6 +8,7 @@ use kameo::prelude::*;
 use kameo::reply::DelegatedReply;
 use kameo::reply::ReplySender;
 use serde::Deserialize;
+use serde::Serialize;
 use tokio::select;
 use tokio::task;
 use tokio::task::JoinHandle;
@@ -143,12 +144,23 @@ enum Mode {
     },
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BulbStatus {
+    pub pos: f64,
+    pub light_on: bool,
+    pub zeroing: bool,
+    pub disabled: bool,
+    pub eeprom_error: bool,
+    pub drift_detected: bool,
+}
+
 pub struct Driver {
     mode: Mode,
     waiters: Vec<ReplySender<Result<()>>>,
     bus: ActorRef<i2c::Bus>,
     config: config::Driver,
     topology: config::Topology,
+    last_status: HashMap<BulbId, BulbStatus>,
 }
 
 impl Actor for Driver {
@@ -321,6 +333,48 @@ impl Message<WaitForIdle> for Driver {
     }
 }
 
+pub struct ReadAll;
+
+impl Message<ReadAll> for Driver {
+    type Reply = Result<HashMap<BulbId, BulbStatus>>;
+
+    async fn handle(&mut self, _: ReadAll, _: &mut Context<Self, Self::Reply>) -> Self::Reply {
+        let can_refresh = matches!(self.mode, Mode::Idle { .. } | Mode::Uninitialized);
+        let is_zeroing = matches!(self.mode, Mode::Zeroing { .. });
+
+        if can_refresh {
+            let mut state = self.idle().await?;
+            for bulb in state.bulbs.values_mut() {
+                let _ = bulb.refresh(false).await;
+            }
+            self.last_status = state
+                .bulbs
+                .iter()
+                .map(|(id, bulb)| {
+                    (
+                        id.clone(),
+                        BulbStatus {
+                            pos: bulb.real_extension() / MAX_EXTENSION,
+                            light_on: bulb.light_on(),
+                            zeroing: bulb.zeroing(),
+                            disabled: bulb.disable_all(),
+                            eeprom_error: bulb.eeprom_error(),
+                            drift_detected: bulb.drift_detected(),
+                        },
+                    )
+                })
+                .collect();
+            self.mode = Mode::Idle { state };
+        } else if is_zeroing {
+            for status in self.last_status.values_mut() {
+                status.zeroing = true;
+            }
+        }
+
+        Ok(self.last_status.clone())
+    }
+}
+
 impl Driver {
     pub fn new(
         bus: &ActorRef<i2c::Bus>,
@@ -333,6 +387,7 @@ impl Driver {
             bus: bus.clone(),
             config: config.clone(),
             topology: topology.clone(),
+            last_status: HashMap::new(),
         }
     }
 

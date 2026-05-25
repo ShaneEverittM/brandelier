@@ -9,7 +9,7 @@ import { Inspector } from './components/Inspector';
 import { WavePanel } from './components/WavePanel';
 import { useOrbitDrag } from './hooks/useOrbitDrag.ts';
 import { BULBS } from './topology';
-import type { BulbId, BulbState, Camera, DragDelta, Group, Mode, RenderStyle, Wave } from './types';
+import type { BulbId, BulbState, BulbStatusMap, Camera, DragDelta, Group, Mode, RenderStyle, Wave } from './types';
 
 const RENDER_STYLE: RenderStyle = 'glow';
 const SHOW_HELP = true;
@@ -30,6 +30,8 @@ function App() {
   }, []);
 
   const [bulbState, setBulbState] = useState<BulbState>(initialState);
+  const [bulbStatus, setBulbStatus] = useState<BulbStatusMap>({});
+  const [sceneReady, setSceneReady] = useState(false);
   const [selection, setSelection] = useState<Set<BulbId>>(new Set());
   const [history, setHistory] = useState<BulbState[]>([]);
   const [future, setFuture] = useState<BulbState[]>([]);
@@ -58,6 +60,33 @@ function App() {
   useEffect(() => {
     bulbStateRef.current = bulbState;
   }, [bulbState]);
+
+  // Poll /api/status on mount (sync pos) then every second (errors / zeroing)
+  const initialSyncDone = useRef(false);
+  useEffect(() => {
+    const fetchStatus = () => {
+      fetch('/api/status')
+        .then((r) => r.json() as Promise<BulbStatusMap>)
+        .then((data) => {
+          setBulbStatus(data);
+          if (!initialSyncDone.current) {
+            initialSyncDone.current = true;
+            setBulbState((cur) => {
+              const next = { ...cur };
+              Object.entries(data).forEach(([id, s]) => {
+                if (id in next) next[id] = { ...next[id], pos: s.pos };
+              });
+              return next;
+            });
+            setSceneReady(true);
+          }
+        })
+        .catch((err) => console.error('Failed to fetch status:', err));
+    };
+    fetchStatus();
+    const id = setInterval(fetchStatus, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Push state to history before mutation
   const pushHistory = useCallback(() => {
@@ -145,20 +174,6 @@ function App() {
       body: JSON.stringify(bulbStateRef.current),
     }).catch((err) => {
       console.error('Failed to push bulb state:', err);
-    });
-  };
-
-  const handleLongPress = (id: BulbId) => {
-    pushHistory();
-    setBulbState((cur) => {
-      const next = { ...cur };
-      selection.forEach((sid) => {
-        next[sid] = { pos: 0.5, bright: 0 };
-      });
-      if (!selection.has(id)) {
-        next[id] = { pos: 0.5, bright: 0 };
-      }
-      return next;
     });
   };
 
@@ -253,6 +268,16 @@ function App() {
       });
       return next;
     });
+    const payload: Record<string, { pos: number; bright: number }> = {};
+    selection.forEach((id) => {
+      const cur = bulbStateRef.current[id];
+      if (cur) payload[id] = { ...cur, bright: b };
+    });
+    void fetch('/api/bulbs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch((err) => console.error('Failed to push brightness:', err));
   };
 
   return (
@@ -326,13 +351,17 @@ function App() {
       {/* Stage */}
       <main
         className="stage"
+        style={{
+          cursor: orbiting ? 'grabbing' : 'default',
+          opacity: sceneReady ? 1 : 0,
+          transition: 'opacity 0.15s ease',
+        }}
         onMouseDown={(e) => {
           if (e.button === 2 || (e.shiftKey && e.target === e.currentTarget) || e.altKey) {
             orbitDrag(e);
           }
         }}
         onContextMenu={(e) => e.preventDefault()}
-        style={{ cursor: orbiting ? 'grabbing' : 'default' }}
       >
         <div className="stage-meta">
           <span className="l">Selection</span>
@@ -341,12 +370,12 @@ function App() {
 
         <Chandelier
           bulbState={bulbState}
+          bulbStatus={bulbStatus}
           selection={selection}
           onSelect={handleSelect}
           onClear={handleClear}
           onDrag={handleDrag}
           onDragEnd={handleDragEnd}
-          onLongPress={handleLongPress}
           renderStyle={RENDER_STYLE}
           camera={camera}
         />
@@ -404,6 +433,15 @@ function App() {
             <div className="action-row">
               <button className="btn" onClick={() => setBrightForSelection(0)}>
                 Off
+              </button>
+              <button className="btn" onClick={() => setBrightForSelection(0.1)}>
+                10%
+              </button>
+              <button className="btn" onClick={() => setBrightForSelection(0.15)}>
+                15%
+              </button>
+              <button className="btn" onClick={() => setBrightForSelection(0.25)}>
+                25%
               </button>
               <button className="btn" onClick={() => setBrightForSelection(0.5)}>
                 50%

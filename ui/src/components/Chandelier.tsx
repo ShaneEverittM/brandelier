@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 import { BULBS } from '../topology';
-import type { Bulb, BulbId, BulbState, Camera, DragAxis, DragDelta, RenderStyle } from '../types';
+import type { Bulb, BulbId, BulbState, BulbStatusMap, Camera, DragAxis, DragDelta, RenderStyle } from '../types';
 
 const TAU = Math.PI * 2;
 
@@ -78,6 +78,7 @@ type DragState = {
 
 type ChandelierProps = {
   bulbState: BulbState;
+  bulbStatus?: BulbStatusMap;
   selection: Set<BulbId>;
   onSelect: (id: BulbId, additive: boolean) => void;
   onClear: () => void;
@@ -91,6 +92,7 @@ type ChandelierProps = {
 // ── Chandelier component ────────────────────────────────────────────
 export function Chandelier({
   bulbState,
+  bulbStatus,
   selection,
   onSelect,
   onClear,
@@ -241,6 +243,16 @@ export function Chandelier({
           const isOn = state.bright > 0.02;
           const opacity = state.bright;
           const r = BULB_R_BASE * bot.scale;
+          const hw = bulbStatus?.[bulb.id];
+          const statusColor = hw?.eeprom_error
+            ? 'oklch(0.60 0.25 25)'
+            : hw?.disabled
+              ? 'oklch(0.50 0 0)'
+              : hw?.zeroing
+                ? 'oklch(0.65 0.20 230)'
+                : hw?.drift_detected
+                  ? 'oklch(0.80 0.18 85)'
+                  : undefined;
 
           return (
             <g key={bulb.id} className="bulb-row" onMouseDown={(e) => handleBulbDown(e, bulb)}>
@@ -253,6 +265,7 @@ export function Chandelier({
                 stroke={isSel ? 'var(--select)' : 'var(--ink-2)'}
                 strokeWidth={isSel ? 1.4 : 0.7}
                 opacity={isSel ? 1 : 0.5}
+                style={{ pointerEvents: 'none' }}
               />
               {/* Cap */}
               <rect
@@ -327,6 +340,18 @@ export function Chandelier({
                   stroke="var(--select)"
                   strokeWidth="1"
                   strokeDasharray="2 3"
+                  style={{ pointerEvents: 'none' }}
+                />
+              )}
+
+              {statusColor && (
+                <circle
+                  cx={bot.x}
+                  cy={bot.y}
+                  r={r + (isSel ? 12 : 5)}
+                  fill="none"
+                  stroke={statusColor}
+                  strokeWidth="2"
                   style={{ pointerEvents: 'none' }}
                 />
               )}

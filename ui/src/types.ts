@@ -11,6 +11,16 @@ export type Bulb = {
 export type BulbStateEntry = { pos: number; bright: number };
 export type BulbState = Record<BulbId, BulbStateEntry>;
 
+export type BulbStatusEntry = {
+  pos: number;
+  light_on: boolean;
+  zeroing: boolean;
+  disabled: boolean;
+  eeprom_error: boolean;
+  drift_detected: boolean;
+};
+export type BulbStatusMap = Record<BulbId, BulbStatusEntry>;
+
 export type Camera = { yaw: number; elevation: number };
 
 export type WavePattern = 'sine' | 'ripple' | 'breath' | 'chase';

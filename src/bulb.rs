@@ -150,6 +150,8 @@ pub struct Bulb {
     zeroing: bool,
     disable_all: bool,
     eeprom_error: bool,
+    drift_detected: bool,
+    has_commanded: bool,
 
     extension_tolerance: f64,
     last_requested_extension: f64,
@@ -173,6 +175,8 @@ impl Bulb {
             zeroing: false,
             disable_all: false,
             eeprom_error: false,
+            drift_detected: false,
+            has_commanded: false,
             extension_tolerance,
             last_requested_extension: 0.0,
         }
@@ -186,6 +190,7 @@ impl Bulb {
         info!(?command, "Writing command");
 
         self.last_requested_extension = command.requested_extension();
+        self.has_commanded = true;
         let data = Bytes::copy_from_slice(&command.encode());
         self.bus
             .ask(i2c::Write {
@@ -229,20 +234,22 @@ impl Bulb {
         self.disable_all = response.disable_all;
         self.eeprom_error = response.eeprom_error;
 
-        if report_drift
-            && self // if the real bulb is off by more than a certain distance
+        let drift = self.has_commanded
+            && self
                 .last_requested_extension
                 .sub(self.real_extension)
                 .abs()
                 .gt(&self.extension_tolerance)
-            && self.real_speed.mul(2.0).lt(&self.max_speed)
-        // and if running at less than half of max speed
-        {
+            && self.real_speed.mul(2.0).lt(&self.max_speed);
+
+        self.drift_detected = drift;
+
+        if report_drift && drift {
             warn!(
                 expected = self.last_requested_extension,
                 actual = self.real_extension,
                 "Extension drift detected"
-            )
+            );
         }
 
         Ok(())
@@ -250,5 +257,25 @@ impl Bulb {
 
     pub fn zeroing(&self) -> bool {
         self.zeroing
+    }
+
+    pub fn real_extension(&self) -> f64 {
+        self.real_extension
+    }
+
+    pub fn light_on(&self) -> bool {
+        self.light_on
+    }
+
+    pub fn disable_all(&self) -> bool {
+        self.disable_all
+    }
+
+    pub fn eeprom_error(&self) -> bool {
+        self.eeprom_error
+    }
+
+    pub fn drift_detected(&self) -> bool {
+        self.drift_detected
     }
 }
