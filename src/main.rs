@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::Router;
@@ -18,6 +20,8 @@ use kameo::prelude::*;
 use rust_embed::Embed;
 use tokio::io;
 use tokio::net::TcpListener;
+use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use validator::ValidationErrors;
 
@@ -40,6 +44,7 @@ mod config;
 mod driver;
 mod i2c;
 mod topology;
+mod wave;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -96,10 +101,18 @@ struct Args {
     config: PathBuf,
 }
 
+struct WaveRunState {
+    token: CancellationToken,
+    started_at: f64,
+    config: wave::StartWaveRequest,
+}
+
 #[derive(Clone)]
 struct AppState {
     driver: ActorRef<Driver>,
     topology: config::Topology,
+    wave: Arc<Mutex<Option<WaveRunState>>>,
+    dimmer: Arc<Mutex<f64>>,
 }
 
 const POSITION_PRESETS_DIR: &str = "presets/position";
@@ -117,12 +130,17 @@ struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { max_length_in: 37.0, dimmer: 1.0 }
+        Self {
+            max_length_in: 37.0,
+            dimmer: 1.0,
+        }
     }
 }
 
 impl Settings {
-    fn default_dimmer() -> f64 { 1.0 }
+    fn default_dimmer() -> f64 {
+        1.0
+    }
 }
 
 fn load_settings() -> Settings {
@@ -195,15 +213,79 @@ async fn get_preset_kind(
     Ok(Json(serde_json::from_str(&text)?))
 }
 
-async fn delete_preset_kind(
-    AxumPath((kind, name)): AxumPath<(String, String)>,
-) -> Result<()> {
+async fn delete_preset_kind(AxumPath((kind, name)): AxumPath<(String, String)>) -> Result<()> {
     let dir = preset_dir(&kind)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset kind"))?;
     let path = safe_preset_path(dir, &name)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid preset name"))?;
     std::fs::remove_file(path)?;
     Ok(())
+}
+
+async fn set_dimmer_live(
+    State(AppState { dimmer, .. }): State<AppState>,
+    Json(body): Json<DimmerBody>,
+) -> Result<()> {
+    *dimmer.lock().unwrap() = body.dimmer.clamp(0.0, 1.0);
+    Ok(())
+}
+
+async fn wave_start(
+    State(AppState {
+        driver,
+        wave,
+        dimmer,
+        ..
+    }): State<AppState>,
+    Json(req): Json<wave::StartWaveRequest>,
+) -> Result<Json<wave::WaveStarted>> {
+    // Cancel any previously running wave.
+    if let Some(old) = wave.lock().unwrap().take() {
+        old.token.cancel();
+    }
+
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    // Adjust epoch anchor so t=0 lines up with the elapsed offset the client sent.
+    let started_at = now_unix - req.elapsed;
+
+    let token = CancellationToken::new();
+    let start = Instant::now();
+
+    let config = req.clone();
+    tokio::spawn(wave::run(driver, req, token.clone(), start, dimmer));
+
+    *wave.lock().unwrap() = Some(WaveRunState {
+        token,
+        started_at,
+        config,
+    });
+
+    Ok(Json(wave::WaveStarted { started_at }))
+}
+
+async fn wave_stop(State(AppState { wave, .. }): State<AppState>) {
+    if let Some(old) = wave.lock().unwrap().take() {
+        old.token.cancel();
+    }
+}
+
+async fn wave_status(State(AppState { wave, .. }): State<AppState>) -> Json<wave::WaveStatus> {
+    let guard = wave.lock().unwrap();
+    match &*guard {
+        Some(s) => Json(wave::WaveStatus {
+            running: true,
+            started_at: Some(s.started_at),
+            config: Some(s.config.clone()),
+        }),
+        None => Json(wave::WaveStatus {
+            running: false,
+            started_at: None,
+            config: None,
+        }),
+    }
 }
 
 async fn topology(State(AppState { topology, .. }): State<AppState>) -> Json<Vec<BulbSlot>> {
@@ -257,7 +339,11 @@ async fn set_max_length(
     State(AppState { driver, .. }): State<AppState>,
     Json(body): Json<MaxLengthBody>,
 ) -> Result<()> {
-    driver.ask(ConfigureMaxExt { max_in: body.inches }).await?;
+    driver
+        .ask(ConfigureMaxExt {
+            max_in: body.inches,
+        })
+        .await?;
     let mut settings = load_settings();
     settings.max_length_in = body.inches;
     std::fs::create_dir_all("presets")?;
@@ -270,7 +356,11 @@ struct DimmerBody {
     dimmer: f64,
 }
 
-async fn set_dimmer(Json(body): Json<DimmerBody>) -> Result<()> {
+async fn set_dimmer(
+    State(AppState { dimmer, .. }): State<AppState>,
+    Json(body): Json<DimmerBody>,
+) -> Result<()> {
+    *dimmer.lock().unwrap() = body.dimmer.clamp(0.0, 1.0);
     let mut settings = load_settings();
     settings.dimmer = body.dimmer;
     std::fs::create_dir_all("presets")?;
@@ -332,11 +422,17 @@ async fn main() -> Result<()> {
     driver.ask(ReadAll).await?;
 
     let settings = load_settings();
-    driver.ask(ConfigureMaxExt { max_in: settings.max_length_in }).await?;
+    driver
+        .ask(ConfigureMaxExt {
+            max_in: settings.max_length_in,
+        })
+        .await?;
 
     let state = AppState {
         driver,
         topology: config.topology,
+        wave: Arc::new(Mutex::new(None)),
+        dimmer: Arc::new(Mutex::new(settings.dimmer)),
     };
 
     let api = Router::new()
@@ -344,8 +440,16 @@ async fn main() -> Result<()> {
         .route("/status", get(status))
         .route("/bulbs", post(bulbs))
         .route("/zero", post(zero))
-        .route("/presets/{kind}", get(list_presets_kind).post(save_preset_kind))
-        .route("/presets/{kind}/{name}", get(get_preset_kind).delete(delete_preset_kind))
+        .route("/wave", get(wave_status).post(wave_start).delete(wave_stop))
+        .route("/dimmer", post(set_dimmer_live))
+        .route(
+            "/presets/{kind}",
+            get(list_presets_kind).post(save_preset_kind),
+        )
+        .route(
+            "/presets/{kind}/{name}",
+            get(get_preset_kind).delete(delete_preset_kind),
+        )
         .route("/groups", get(get_groups).post(save_groups))
         .route("/settings", get(get_settings))
         .route("/settings/max-length", post(set_max_length))

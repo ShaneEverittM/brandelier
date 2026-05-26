@@ -78,7 +78,8 @@ function App() {
 
   const [maxLength, setMaxLength] = useState(37);
   const maxLengthSynced = useRef(false);
-  useEffect(() => {
+
+  const loadSettings = useCallback(() => {
     fetch('/api/settings')
       .then((r) => r.json() as Promise<{ max_length_in: number; dimmer?: number }>)
       .then((data) => {
@@ -87,6 +88,55 @@ function App() {
         if (data.dimmer !== undefined) {
           dimmerRef.current = data.dimmer;
           setDimmer(data.dimmer);
+        }
+      })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) loadSettings();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [loadSettings]);
+
+  useEffect(() => {
+    loadSettings();
+    fetch('/api/wave')
+      .then((r) => r.json() as Promise<{
+        running: boolean;
+        startedAt?: number;
+        config?: {
+          waves: Wave[];
+          posPreset?: string | null;
+          brightPreset?: string | null;
+          basePos?: Record<string, number>;
+          baseBright?: Record<string, number>;
+        };
+      }>)
+      .then(({ running, startedAt, config }) => {
+        if (running && startedAt !== undefined && config) {
+          waveServerStartRef.current = startedAt;
+          setWaves(config.waves);
+          setWavePosPresetName(config.posPreset ?? null);
+          setWaveBrightPresetName(config.brightPreset ?? null);
+          // Seed bulbState from the stored base snapshot so the wave animation's
+          // fallback path uses the correct values immediately. We also write
+          // bulbStateRef directly so the ref is current before the first tick.
+          if (config.basePos || config.baseBright) {
+            const restored: BulbState = {};
+            BULBS.forEach((b) => {
+              restored[b.id] = {
+                pos: config.basePos?.[b.id] ?? 0.5,
+                bright: config.baseBright?.[b.id] ?? 0,
+              };
+            });
+            bulbStateRef.current = restored;
+            setBulbState(restored);
+          }
+          setIsPlaying(true);
+          setMode('wave');
         }
       })
       .catch(console.error);
@@ -346,6 +396,48 @@ function App() {
       .catch(console.error);
   };
 
+  const startWave = () => {
+    const posSource = wavePosSnapshotRef.current;
+    const brightSource = waveBrightSnapshotRef.current;
+    const basePos: Record<string, number> = {};
+    const baseBright: Record<string, number> = {};
+    BULBS.forEach((b) => {
+      const cur = bulbStateRef.current[b.id] ?? { pos: 0.5, bright: 0 };
+      basePos[b.id] = posSource ? (posSource[b.id]?.pos ?? cur.pos) : cur.pos;
+      baseBright[b.id] = brightSource ? (brightSource[b.id]?.bright ?? cur.bright) : cur.bright;
+    });
+    const resolvedWaves = waves.map((w) => {
+      const grp = w.groupId ? groups.find((g) => g.id === w.groupId) : null;
+      const targetIds = grp
+        ? grp.ids
+        : selection.size > 0 ? [...selection] : BULBS.map((b) => b.id);
+      return { ...w, targetIds };
+    });
+    fetch('/api/wave', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        waves: resolvedWaves,
+        basePos,
+        baseBright,
+        posPreset: wavePosPresetName,
+        brightPreset: waveBrightPresetName,
+        elapsed: waveElapsedRef.current,
+      }),
+    })
+      .then((r) => r.json() as Promise<{ startedAt: number }>)
+      .then(({ startedAt }) => {
+        waveServerStartRef.current = startedAt;
+        setIsPlaying(true);
+      })
+      .catch(console.error);
+  };
+
+  const stopWave = () => {
+    void fetch('/api/wave', { method: 'DELETE' }).catch(console.error);
+    setIsPlaying(false);
+  };
+
   const undo = () => {
     if (history.length === 0) return;
     const prev = history[history.length - 1];
@@ -445,11 +537,11 @@ function App() {
   };
 
   // Wave animation
-  const waveStartRef = useRef(0);
+  // waveServerStartRef: Unix epoch seconds at which t=0 of the current wave run corresponds to.
+  const waveServerStartRef = useRef(0);
   const waveElapsedRef = useRef(0);
   useEffect(() => {
     if (!isPlaying) return;
-    waveStartRef.current = performance.now() - waveElapsedRef.current * 1000;
     const posSource = wavePosSnapshotRef.current;
     const brightSource = waveBrightSnapshotRef.current;
     const baseSnapshot: BulbState = {};
@@ -461,12 +553,10 @@ function App() {
       };
     });
     let raf = 0;
-    let lastPush = 0;
-    let waveController: AbortController | null = null;
 
     const tick = () => {
-      const now = performance.now();
-      const t = (now - waveStartRef.current) / 1000;
+      // Sync with the server's clock so the visual display matches the hardware.
+      const t = Date.now() / 1000 - waveServerStartRef.current;
 
       // Accumulate additive offsets from each wave
       const posOff: Record<string, number> = {};
@@ -538,25 +628,13 @@ function App() {
       });
 
       setBulbState(next);
-      if (now - lastPush >= 1000 / 30) {
-        lastPush = now;
-        waveController?.abort();
-        waveController = new AbortController();
-        void fetch('/api/bulbs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(dimState(next)),
-          signal: waveController.signal,
-        }).catch((err: Error) => {
-          if (err.name !== 'AbortError') console.error('Failed to push bulb state:', err);
-        });
-      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(raf);
-      waveElapsedRef.current = (performance.now() - waveStartRef.current) / 1000;
+      // Save elapsed so the next resume continues from the same point.
+      waveElapsedRef.current = Date.now() / 1000 - waveServerStartRef.current;
     };
   }, [isPlaying, waves]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -685,9 +763,18 @@ function App() {
             const d = parseFloat(e.target.value);
             dimmerRef.current = d;
             setDimmer(d);
-            if (!isPlaying) {
-              dimmerAbortRef.current?.abort();
-              dimmerAbortRef.current = new AbortController();
+            dimmerAbortRef.current?.abort();
+            dimmerAbortRef.current = new AbortController();
+            if (isPlaying) {
+              void fetch('/api/dimmer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dimmer: d }),
+                signal: dimmerAbortRef.current.signal,
+              }).catch((err: Error) => {
+                if (err.name !== 'AbortError') console.error('Failed to push dimmer:', err);
+              });
+            } else {
               void fetch('/api/bulbs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -900,11 +987,8 @@ function App() {
                   onSaveWavePreset={saveWavePreset}
                   onDeleteWavePreset={deleteWavePreset}
                   isPlaying={isPlaying}
-                  onPlay={() => {
-                    setMode('wave');
-                    setIsPlaying(true);
-                  }}
-                  onStop={() => setIsPlaying(false)}
+                  onPlay={startWave}
+                  onStop={stopWave}
                 />
               </section>
             )}
