@@ -243,12 +243,19 @@ type Props = {
   waveBrightPresetName: string | null;
   onWaveBrightPresetName: (name: string | null) => void;
   groups: Group[];
+  wavePresets: string[];
+  onLoadWavePreset: (name: string) => void;
+  onSaveWavePreset: (name: string) => void;
+  onDeleteWavePreset: (name: string) => void;
   isPlaying: boolean;
   onPlay: () => void;
   onStop: () => void;
 };
 
-export function WavePanel({ waves, onWaves, positionPresets, brightnessPresets, wavePosPresetName, onWavePosPresetName, waveBrightPresetName, onWaveBrightPresetName, groups, isPlaying, onPlay, onStop }: Props) {
+export function WavePanel({ waves, onWaves, positionPresets, brightnessPresets, wavePosPresetName, onWavePosPresetName, waveBrightPresetName, onWaveBrightPresetName, groups, wavePresets, onLoadWavePreset, onSaveWavePreset, onDeleteWavePreset, isPlaying, onPlay, onStop }: Props) {
+  const [saveName, setSaveName] = useState('');
+  const [selectedPreset, setSelectedPreset] = useState('');
+
   const updateWave = (i: number, next: Wave) => {
     const updated = waves.map((w, idx) => (idx === i ? next : w));
     onWaves(updated);
@@ -262,8 +269,51 @@ export function WavePanel({ waves, onWaves, positionPresets, brightnessPresets, 
     onWaves([...waves, { ...DEFAULT_WAVE }]);
   };
 
+  const handleSave = () => {
+    const name = saveName.trim();
+    if (!name) return;
+    onSaveWavePreset(name);
+    setSaveName('');
+  };
+
   return (
     <div className="wave">
+      <div className="wave-select-row">
+        <span className="wave-select-label">Wave preset</span>
+        <select
+          className="wave-group-select"
+          value={selectedPreset}
+          disabled={isPlaying}
+          onChange={(e) => {
+            setSelectedPreset(e.target.value);
+            if (e.target.value) onLoadWavePreset(e.target.value);
+          }}
+        >
+          <option value="">Load…</option>
+          {wavePresets.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
+        </select>
+        {selectedPreset && (
+          <button
+            className="btn danger"
+            style={{ flex: 'none', padding: '0 8px', alignSelf: 'stretch' }}
+            disabled={isPlaying}
+            title={`Delete "${selectedPreset}"`}
+            onClick={() => {
+              if (window.confirm(`Delete preset "${selectedPreset}"?`)) {
+                onDeleteWavePreset(selectedPreset);
+                setSelectedPreset('');
+              }
+            }}
+          >
+            <svg viewBox="0 0 14 14" width="12" height="12" fill="currentColor">
+              <path d="M5 1h4a1 1 0 0 1 1 1H4a1 1 0 0 1 1-1ZM2 3h10l-.9 9H2.9L2 3Zm3 2v5h1V5H5Zm3 0v5h1V5H8Z" />
+            </svg>
+          </button>
+        )}
+      </div>
+
       <div className="wave-select-row">
         <span className="wave-select-label">Position preset</span>
         <select
@@ -323,6 +373,24 @@ export function WavePanel({ waves, onWaves, positionPresets, brightnessPresets, 
             Start wave
           </button>
         )}
+      </div>
+
+      <div className="preset-add" style={{ marginTop: 8 }}>
+        <input
+          type="text"
+          placeholder="Save wave preset…"
+          value={saveName}
+          onChange={(e) => setSaveName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+        />
+        <button
+          className="btn primary"
+          style={{ flex: 'none' }}
+          disabled={!saveName.trim()}
+          onClick={handleSave}
+        >
+          Save
+        </button>
       </div>
     </div>
   );

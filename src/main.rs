@@ -104,6 +104,7 @@ struct AppState {
 
 const POSITION_PRESETS_DIR: &str = "presets/position";
 const BRIGHTNESS_PRESETS_DIR: &str = "presets/brightness";
+const WAVE_PRESETS_DIR: &str = "presets/wave";
 const SETTINGS_FILE: &str = "presets/settings.json";
 const GROUPS_FILE: &str = "presets/groups.json";
 
@@ -135,6 +136,7 @@ fn preset_dir(kind: &str) -> Option<&'static str> {
     match kind {
         "position" => Some(POSITION_PRESETS_DIR),
         "brightness" => Some(BRIGHTNESS_PRESETS_DIR),
+        "wave" => Some(WAVE_PRESETS_DIR),
         _ => None,
     }
 }

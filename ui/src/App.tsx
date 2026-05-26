@@ -37,6 +37,7 @@ function App() {
   const [selection, setSelection] = useState<Set<BulbId>>(new Set());
   const [positionPresets, setPositionPresets] = useState<string[]>([]);
   const [brightnessPresets, setBrightnessPresets] = useState<string[]>([]);
+  const [wavePresets, setWavePresets] = useState<string[]>([]);
   const [previewingPreset, setPreviewingPreset] = useState<{ name: string; kind: PresetKind } | null>(null);
   const previewSnapshotRef = useRef<BulbState | null>(null);
   const [history, setHistory] = useState<BulbState[]>([]);
@@ -203,11 +204,20 @@ function App() {
       .then(setBrightnessPresets)
       .catch(console.error);
   };
+  const fetchWavePresets = () => {
+    fetch('/api/presets/wave')
+      .then((r) => r.json() as Promise<string[]>)
+      .then(setWavePresets)
+      .catch(console.error);
+  };
 
   useEffect(() => {
     if (mode === 'presets' || mode === 'wave') {
       fetchPositionPresets();
       fetchBrightnessPresets();
+    }
+    if (mode === 'wave') {
+      fetchWavePresets();
     }
     if (mode !== 'presets' && previewSnapshotRef.current) {
       setBulbState(previewSnapshotRef.current);
@@ -303,6 +313,36 @@ function App() {
   const deleteBrightnessPreset = (name: string) => {
     void fetch(`/api/presets/brightness/${encodeURIComponent(name)}`, { method: 'DELETE' })
       .then(() => { cancelPreview(); fetchBrightnessPresets(); })
+      .catch(console.error);
+  };
+
+  const saveWavePreset = (name: string) => {
+    void fetch('/api/presets/wave', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, state: { waves, posPreset: wavePosPresetName, brightPreset: waveBrightPresetName } }),
+    }).then(fetchWavePresets).catch(console.error);
+  };
+
+  const loadWavePreset = (name: string) => {
+    fetch(`/api/presets/wave/${encodeURIComponent(name)}`)
+      .then((r) => r.json() as Promise<unknown>)
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setWaves(data as Wave[]);
+        } else {
+          const d = data as { waves: Wave[]; posPreset?: string | null; brightPreset?: string | null };
+          setWaves(d.waves);
+          setWavePosPresetName(d.posPreset ?? null);
+          setWaveBrightPresetName(d.brightPreset ?? null);
+        }
+      })
+      .catch(console.error);
+  };
+
+  const deleteWavePreset = (name: string) => {
+    void fetch(`/api/presets/wave/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      .then(fetchWavePresets)
       .catch(console.error);
   };
 
@@ -406,9 +446,10 @@ function App() {
 
   // Wave animation
   const waveStartRef = useRef(0);
+  const waveElapsedRef = useRef(0);
   useEffect(() => {
     if (!isPlaying) return;
-    waveStartRef.current = performance.now();
+    waveStartRef.current = performance.now() - waveElapsedRef.current * 1000;
     const posSource = wavePosSnapshotRef.current;
     const brightSource = waveBrightSnapshotRef.current;
     const baseSnapshot: BulbState = {};
@@ -513,7 +554,10 @@ function App() {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      waveElapsedRef.current = (performance.now() - waveStartRef.current) / 1000;
+    };
   }, [isPlaying, waves]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard
@@ -531,6 +575,8 @@ function App() {
       } else if (e.key === 'Escape') {
         handleClear();
       } else if (e.key === ' ' && mode === 'wave') {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
         e.preventDefault();
         setIsPlaying((p) => !p);
       }
@@ -849,6 +895,10 @@ function App() {
                   waveBrightPresetName={waveBrightPresetName}
                   onWaveBrightPresetName={setWaveBrightPresetName}
                   groups={groups}
+                  wavePresets={wavePresets}
+                  onLoadWavePreset={loadWavePreset}
+                  onSaveWavePreset={saveWavePreset}
+                  onDeleteWavePreset={deleteWavePreset}
                   isPlaying={isPlaying}
                   onPlay={() => {
                     setMode('wave');
