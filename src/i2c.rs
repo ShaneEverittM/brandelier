@@ -94,7 +94,7 @@ mod mock {
 pub use mock::MockBus;
 
 const CRC: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
-const TELEMETRY_SIZE: usize = 4;
+const TELEMETRY_SIZE: usize = 5;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 

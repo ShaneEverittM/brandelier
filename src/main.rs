@@ -31,6 +31,7 @@ use crate::driver::ConfigureMaxExt;
 use crate::driver::Cycle;
 use crate::driver::Driver;
 use crate::driver::ReadAll;
+use crate::driver::SavePositions;
 use crate::driver::SetAll;
 use crate::driver::Stop;
 use crate::driver::Zero;
@@ -443,6 +444,7 @@ async fn enter_disable(
         ctrl.saved = Some(DisabledAllSave { wave_config, wave_elapsed_at_save, dimmer: current_dimmer });
     }
     *dimmer.lock().unwrap() = 0.0;
+    let _ = driver.ask(SavePositions).await;
     let all_zero: HashMap<BulbId, BulbCommand> = status
         .iter()
         .map(|(id, s)| (id.clone(), BulbCommand { pos: s.pos, bright: 0.0 }))

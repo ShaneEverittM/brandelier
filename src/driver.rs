@@ -296,6 +296,24 @@ impl Message<ZeroSome> for Driver {
     }
 }
 
+pub struct SavePositions;
+
+impl Message<SavePositions> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, _: SavePositions, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for bulb in state.bulbs.values_mut() {
+            bulb.write(Command::SavePosition {
+                extension: bulb.real_extension(),
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        Ok(())
+    }
+}
+
 pub struct Stop;
 
 impl Message<Stop> for Driver {

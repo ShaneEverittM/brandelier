@@ -37,7 +37,6 @@ pub enum Command {
         extension: f64,
         brightness: f64,
     } = 0x01,
-    #[expect(unused)]
     SavePosition {
         extension: f64,
     } = 0x02,
@@ -113,6 +112,7 @@ impl Command {
 #[derive(Debug)]
 pub struct Response {
     pub extension: f64,
+    pub brightness: u8,
     pub speed: f64,
     pub light: bool,
     pub zeroing: bool,
@@ -122,7 +122,7 @@ pub struct Response {
 }
 
 impl Response {
-    const LENGTH: usize = 4;
+    const LENGTH: usize = 5;
 
     fn parse(data: &[u8]) -> Result<Self> {
         if data.len() != Self::LENGTH {
@@ -131,12 +131,13 @@ impl Response {
 
         Ok(Self {
             extension: (data[0] as f64) + (data[1] as f64) / 256.0,
-            speed: (data[2] as f64) / 32.0,
-            light: data[3] & 0b00001 != 0,
-            zeroing: data[3] & 0b00010 != 0,
-            disable_all: data[3] & 0b00100 != 0,
-            eeprom_error: data[3] & 0b01000 != 0,
-            max_speed_warn: data[3] & 0b10000 != 0,
+            brightness: data[2],
+            speed: (data[3] as f64) / 32.0,
+            light: data[4] & 0b00001 != 0,
+            zeroing: data[4] & 0b00010 != 0,
+            disable_all: data[4] & 0b00100 != 0,
+            eeprom_error: data[4] & 0b01000 != 0,
+            max_speed_warn: data[4] & 0b10000 != 0,
         })
     }
 }
@@ -145,6 +146,7 @@ pub struct Bulb {
     bus: ActorRef<Bus>,
     address: u16,
     position: Position,
+    real_brightness: u8,
     real_extension: f64,
     real_speed: f64,
     max_speed: f64,
@@ -171,6 +173,7 @@ impl Bulb {
             bus,
             address,
             position,
+            real_brightness: 0,
             real_extension: 0.0,
             real_speed: 0.0,
             max_speed: 1.0, // this needs to get updated whenever SetMaxExtension is run
@@ -232,6 +235,7 @@ impl Bulb {
         };
 
         self.real_extension = response.extension;
+        self.real_brightness = response.brightness;
         self.real_speed = response.speed;
         self.light_on = response.light;
         self.zeroing = response.zeroing;

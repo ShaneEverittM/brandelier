@@ -827,6 +827,40 @@ body {
   cursor: ns-resize;
 }
 
+.inspector-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+.inspector-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-left: 2px solid;
+  background: var(--paper-2);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.inspector-notice-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 3px;
+}
+.inspector-notice-label {
+  font: 600 11px/1.2 var(--sans);
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.inspector-notice-desc {
+  font: 400 11px/1.4 var(--sans);
+  color: var(--ink-3);
+}
+
 .disable-overlay {
   position: fixed;
   inset: 0;

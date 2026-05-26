@@ -968,6 +968,7 @@ function App() {
               <Inspector
                 selectedIds={selection}
                 bulbState={bulbState}
+                bulbStatus={bulbStatus}
                 maxLength={maxLength}
                 onClear={handleClear}
                 onZero={() => {
