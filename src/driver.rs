@@ -151,6 +151,7 @@ pub struct BulbStatus {
     pub zeroing: bool,
     pub disabled: bool,
     pub eeprom_error: bool,
+    pub max_speed_warn: bool,
     pub drift_detected: bool,
 }
 
@@ -360,6 +361,7 @@ impl Message<ReadAll> for Driver {
                             zeroing: bulb.zeroing(),
                             disabled: bulb.disable_all(),
                             eeprom_error: bulb.eeprom_error(),
+                            max_speed_warn: bulb.max_speed_warn(),
                             drift_detected: bulb.drift_detected(),
                         },
                     )

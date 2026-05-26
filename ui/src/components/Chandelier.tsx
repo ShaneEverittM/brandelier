@@ -248,11 +248,13 @@ export function Chandelier({
             ? 'oklch(0.60 0.25 25)'
             : hw?.disabled
               ? 'oklch(0.50 0 0)'
-              : hw?.zeroing
-                ? 'oklch(0.65 0.20 230)'
-                : hw?.drift_detected
-                  ? 'oklch(0.80 0.18 85)'
-                  : undefined;
+              : hw?.max_speed_warn
+                ? 'oklch(0.72 0.22 50)'
+                : hw?.zeroing
+                  ? 'oklch(0.65 0.20 230)'
+                  : hw?.drift_detected
+                    ? 'oklch(0.80 0.18 85)'
+                    : undefined;
 
           return (
             <g key={bulb.id} className="bulb-row" onMouseDown={(e) => handleBulbDown(e, bulb)}>

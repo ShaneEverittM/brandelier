@@ -17,6 +17,7 @@ export type BulbStatusEntry = {
   zeroing: boolean;
   disabled: boolean;
   eeprom_error: boolean;
+  max_speed_warn: boolean;
   drift_detected: boolean;
 };
 export type BulbStatusMap = Record<BulbId, BulbStatusEntry>;

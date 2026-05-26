@@ -118,6 +118,7 @@ pub struct Response {
     pub zeroing: bool,
     pub disable_all: bool,
     pub eeprom_error: bool,
+    pub max_speed_warn: bool,
 }
 
 impl Response {
@@ -131,10 +132,11 @@ impl Response {
         Ok(Self {
             extension: (data[0] as f64) + (data[1] as f64) / 256.0,
             speed: (data[2] as f64) / 32.0,
-            light: data[3] & 0b0001 != 0,
-            zeroing: data[3] & 0b0010 != 0,
-            disable_all: data[3] & 0b0100 != 0,
-            eeprom_error: data[3] & 0b1000 != 0,
+            light: data[3] & 0b00001 != 0,
+            zeroing: data[3] & 0b00010 != 0,
+            disable_all: data[3] & 0b00100 != 0,
+            eeprom_error: data[3] & 0b01000 != 0,
+            max_speed_warn: data[3] & 0b10000 != 0,
         })
     }
 }
@@ -150,6 +152,7 @@ pub struct Bulb {
     zeroing: bool,
     disable_all: bool,
     eeprom_error: bool,
+    max_speed_warn: bool,
     drift_detected: bool,
     has_commanded: bool,
 
@@ -175,6 +178,7 @@ impl Bulb {
             zeroing: false,
             disable_all: false,
             eeprom_error: false,
+            max_speed_warn: false,
             drift_detected: false,
             has_commanded: false,
             extension_tolerance,
@@ -233,6 +237,7 @@ impl Bulb {
         self.zeroing = response.zeroing;
         self.disable_all = response.disable_all;
         self.eeprom_error = response.eeprom_error;
+        self.max_speed_warn = response.max_speed_warn;
 
         let drift = self.has_commanded
             && self
@@ -273,6 +278,10 @@ impl Bulb {
 
     pub fn eeprom_error(&self) -> bool {
         self.eeprom_error
+    }
+
+    pub fn max_speed_warn(&self) -> bool {
+        self.max_speed_warn
     }
 
     pub fn drift_detected(&self) -> bool {
