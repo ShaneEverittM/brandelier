@@ -118,6 +118,7 @@ pub async fn run(
 
     loop {
         tokio::select! {
+            biased;
             _ = token.cancelled() => break,
             _ = ticker.tick() => {}
         }

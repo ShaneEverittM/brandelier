@@ -73,6 +73,9 @@ function App() {
     return () => clearTimeout(id);
   }, [groups]);
 
+  const [disabledAll, setDisabledAll] = useState(false);
+  const prevDisabledAllRef = useRef(false);
+
   const [dimmer, setDimmer] = useState(1.0);
   const dimmerRef = useRef(1.0);
 
@@ -216,6 +219,59 @@ function App() {
     const id = setInterval(fetchStatus, 1000);
     return () => clearInterval(id);
   }, []);
+
+  // Poll disable-all state; on re-enable, re-sync wave clock and push static state
+  useEffect(() => {
+    const fetchDisableAll = () => {
+      fetch('/api/disable-all')
+        .then((r) => r.json() as Promise<{ disabled: boolean }>)
+        .then(({ disabled }) => {
+          const wasDisabled = prevDisabledAllRef.current;
+          prevDisabledAllRef.current = disabled;
+          setDisabledAll(disabled);
+          if (wasDisabled && !disabled) {
+            // Re-sync wave clock from server
+            fetch('/api/wave')
+              .then((r) => r.json() as Promise<{ running: boolean; startedAt?: number }>)
+              .then(({ running, startedAt }) => {
+                if (running && startedAt !== undefined) {
+                  waveServerStartRef.current = startedAt;
+                  setIsPlaying(true);
+                } else {
+                  setIsPlaying(false);
+                  pushBulbs(bulbStateRef.current);
+                }
+              })
+              .catch(console.error);
+          }
+        })
+        .catch(console.error);
+    };
+    fetchDisableAll();
+    const id = setInterval(fetchDisableAll, 1000);
+    return () => clearInterval(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRestoreFromDisable = () => {
+    setDisabledAll(false);
+    prevDisabledAllRef.current = false;
+    void fetch('/api/disable-all', { method: 'POST' })
+      .then(() => {
+        fetch('/api/wave')
+          .then((r) => r.json() as Promise<{ running: boolean; startedAt?: number }>)
+          .then(({ running, startedAt }) => {
+            if (running && startedAt !== undefined) {
+              waveServerStartRef.current = startedAt;
+              setIsPlaying(true);
+            } else {
+              setIsPlaying(false);
+              pushBulbs(bulbStateRef.current);
+            }
+          })
+          .catch(console.error);
+      })
+      .catch(console.error);
+  };
 
   // Push state to history before mutation
   const pushHistory = useCallback(() => {
@@ -706,6 +762,19 @@ function App() {
         </nav>
 
         <div className="topbar-right">
+          <button
+            className="iconbtn stop-btn"
+            title="Stop all (disable)"
+            onClick={() => {
+              setDisabledAll(true);
+              prevDisabledAllRef.current = true;
+              void fetch('/api/disable', { method: 'POST' }).catch(console.error);
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="3" y="3" width="10" height="10" rx="1.5" />
+            </svg>
+          </button>
           <span className="broadcast">
             <span className="live"></span>
             Broadcasting · 19 fixtures
@@ -996,7 +1065,9 @@ function App() {
         )}
       </aside>
 
-
+      {disabledAll && (
+        <div className="disable-overlay" onClick={handleRestoreFromDisable} />
+      )}
     </div>
   );
 }

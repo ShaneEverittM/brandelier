@@ -827,6 +827,21 @@ body {
   cursor: ns-resize;
 }
 
+.disable-overlay {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 9999;
+  cursor: pointer;
+}
+
+.stop-btn {
+  color: oklch(0.65 0.18 25);
+}
+.stop-btn:hover {
+  color: oklch(0.75 0.2 25);
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   .app {

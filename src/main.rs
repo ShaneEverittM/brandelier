@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::Router;
@@ -107,12 +107,25 @@ struct WaveRunState {
     config: wave::StartWaveRequest,
 }
 
+struct DisabledAllSave {
+    wave_config: Option<wave::StartWaveRequest>,
+    wave_elapsed_at_save: f64,
+    dimmer: f64,
+}
+
+struct DisableAllCtrl {
+    disabled: bool,
+    prev_any_disable_all: bool,
+    saved: Option<DisabledAllSave>,
+}
+
 #[derive(Clone)]
 struct AppState {
     driver: ActorRef<Driver>,
     topology: config::Topology,
     wave: Arc<Mutex<Option<WaveRunState>>>,
     dimmer: Arc<Mutex<f64>>,
+    disable_ctrl: Arc<Mutex<DisableAllCtrl>>,
 }
 
 const POSITION_PRESETS_DIR: &str = "presets/position";
@@ -401,6 +414,128 @@ async fn assets(uri: Uri) -> Response {
     }
 }
 
+async fn enter_disable(
+    driver: &ActorRef<Driver>,
+    wave: &Arc<Mutex<Option<WaveRunState>>>,
+    dimmer: &Arc<Mutex<f64>>,
+    disable_ctrl: &Arc<Mutex<DisableAllCtrl>>,
+    status: &HashMap<BulbId, BulbStatus>,
+) {
+    let current_dimmer = *dimmer.lock().unwrap();
+    let (wave_config, wave_elapsed_at_save) = {
+        let guard = wave.lock().unwrap();
+        if let Some(w) = guard.as_ref() {
+            let now_unix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64();
+            (Some(w.config.clone()), now_unix - w.started_at)
+        } else {
+            (None, 0.0)
+        }
+    };
+    if let Some(old) = wave.lock().unwrap().take() {
+        old.token.cancel();
+    }
+    {
+        let mut ctrl = disable_ctrl.lock().unwrap();
+        ctrl.disabled = true;
+        ctrl.saved = Some(DisabledAllSave { wave_config, wave_elapsed_at_save, dimmer: current_dimmer });
+    }
+    *dimmer.lock().unwrap() = 0.0;
+    let all_zero: HashMap<BulbId, BulbCommand> = status
+        .iter()
+        .map(|(id, s)| (id.clone(), BulbCommand { pos: s.pos, bright: 0.0 }))
+        .collect();
+    let _ = driver.ask(SetAll { bulbs: all_zero }).await;
+}
+
+async fn restore_from_disable(
+    driver: &ActorRef<Driver>,
+    wave: &Arc<Mutex<Option<WaveRunState>>>,
+    dimmer: &Arc<Mutex<f64>>,
+    disable_ctrl: &Arc<Mutex<DisableAllCtrl>>,
+) {
+    let saved = {
+        let mut ctrl = disable_ctrl.lock().unwrap();
+        if !ctrl.disabled {
+            return;
+        }
+        ctrl.disabled = false;
+        ctrl.saved.take()
+    };
+    let Some(save) = saved else { return };
+    *dimmer.lock().unwrap() = save.dimmer;
+    if let Some(mut wave_req) = save.wave_config {
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        wave_req.elapsed = save.wave_elapsed_at_save;
+        let started_at = now_unix - save.wave_elapsed_at_save;
+        let token = CancellationToken::new();
+        let start = Instant::now();
+        let config = wave_req.clone();
+        tokio::spawn(wave::run(driver.clone(), wave_req, token.clone(), start, dimmer.clone()));
+        *wave.lock().unwrap() = Some(WaveRunState { token, started_at, config });
+    }
+}
+
+async fn disable_all_monitor(
+    driver: ActorRef<Driver>,
+    wave: Arc<Mutex<Option<WaveRunState>>>,
+    dimmer: Arc<Mutex<f64>>,
+    disable_ctrl: Arc<Mutex<DisableAllCtrl>>,
+) {
+    loop {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let Ok(status) = driver.ask(ReadAll).await else { continue };
+        let any_disable_all = status.values().any(|s| s.disabled);
+        let rising_edge = {
+            let mut ctrl = disable_ctrl.lock().unwrap();
+            let edge = any_disable_all && !ctrl.prev_any_disable_all;
+            ctrl.prev_any_disable_all = any_disable_all;
+            edge
+        };
+        if !rising_edge {
+            continue;
+        }
+        if disable_ctrl.lock().unwrap().disabled {
+            restore_from_disable(&driver, &wave, &dimmer, &disable_ctrl).await;
+        } else {
+            enter_disable(&driver, &wave, &dimmer, &disable_ctrl, &status).await;
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct DisableAllStatus {
+    disabled: bool,
+}
+
+async fn get_disable_all(
+    State(AppState { disable_ctrl, .. }): State<AppState>,
+) -> Json<DisableAllStatus> {
+    let disabled = disable_ctrl.lock().unwrap().disabled;
+    Json(DisableAllStatus { disabled })
+}
+
+async fn post_disable_all(
+    State(AppState { driver, wave, dimmer, disable_ctrl, .. }): State<AppState>,
+) {
+    restore_from_disable(&driver, &wave, &dimmer, &disable_ctrl).await;
+}
+
+async fn post_trigger_disable(
+    State(AppState { driver, wave, dimmer, disable_ctrl, .. }): State<AppState>,
+) {
+    if disable_ctrl.lock().unwrap().disabled {
+        return;
+    }
+    let Ok(status) = driver.ask(ReadAll).await else { return };
+    enter_disable(&driver, &wave, &dimmer, &disable_ctrl, &status).await;
+}
+
 fn init_tracing() {
     tracing_subscriber::fmt::fmt()
         .pretty()
@@ -428,12 +563,26 @@ async fn main() -> Result<()> {
         })
         .await?;
 
+    let disable_ctrl = Arc::new(Mutex::new(DisableAllCtrl {
+        disabled: false,
+        prev_any_disable_all: false,
+        saved: None,
+    }));
+
     let state = AppState {
-        driver,
+        driver: driver.clone(),
         topology: config.topology,
         wave: Arc::new(Mutex::new(None)),
         dimmer: Arc::new(Mutex::new(settings.dimmer)),
+        disable_ctrl: disable_ctrl.clone(),
     };
+
+    tokio::spawn(disable_all_monitor(
+        driver,
+        state.wave.clone(),
+        state.dimmer.clone(),
+        disable_ctrl,
+    ));
 
     let api = Router::new()
         .route("/topology", get(topology))
@@ -441,6 +590,8 @@ async fn main() -> Result<()> {
         .route("/bulbs", post(bulbs))
         .route("/zero", post(zero))
         .route("/wave", get(wave_status).post(wave_start).delete(wave_stop))
+        .route("/disable-all", get(get_disable_all).post(post_disable_all))
+        .route("/disable", post(post_trigger_disable))
         .route("/dimmer", post(set_dimmer_live))
         .route(
             "/presets/{kind}",
