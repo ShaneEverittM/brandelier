@@ -82,15 +82,20 @@ function App() {
   const [maxLength, setMaxLength] = useState(37);
   const maxLengthSynced = useRef(false);
 
+  const [startupBrightness, setStartupBrightness] = useState(1.0);
+
   const loadSettings = useCallback(() => {
     fetch('/api/settings')
-      .then((r) => r.json() as Promise<{ max_length_in: number; dimmer?: number }>)
+      .then((r) => r.json() as Promise<{ max_length_in: number; dimmer?: number; startup_brightness?: number }>)
       .then((data) => {
         maxLengthSynced.current = true;
         setMaxLength(data.max_length_in);
         if (data.dimmer !== undefined) {
           dimmerRef.current = data.dimmer;
           setDimmer(data.dimmer);
+        }
+        if (data.startup_brightness !== undefined) {
+          setStartupBrightness(data.startup_brightness);
         }
       })
       .catch(console.error);
@@ -206,7 +211,7 @@ function App() {
             setBulbState((cur) => {
               const next = { ...cur };
               Object.entries(data).forEach(([id, s]) => {
-                if (id in next) next[id] = { ...next[id], pos: s.pos };
+                if (id in next) next[id] = { ...next[id], pos: s.pos, bright: s.bright };
               });
               return next;
             });
@@ -826,7 +831,7 @@ function App() {
           type="range"
           min="0"
           max="1"
-          step="0.01"
+          step={1 / 256}
           value={dimmer}
           onChange={(e) => {
             const d = parseFloat(e.target.value);
@@ -957,6 +962,33 @@ function App() {
               <div className="settings-range-labels">
                 <span>5 in</span>
                 <span>100 in</span>
+              </div>
+            </div>
+            <div className="settings-row">
+              <label className="settings-label">
+                Brightness on startup
+                <span className="settings-value">{Math.round(startupBrightness * 100)}%</span>
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={startupBrightness}
+                onChange={(e) => setStartupBrightness(parseFloat(e.target.value))}
+                onPointerUp={(e) => {
+                  const brightness = parseFloat((e.target as HTMLInputElement).value);
+                  void fetch('/api/settings/startup-brightness', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ brightness }),
+                  }).catch(console.error);
+                }}
+                className="settings-slider"
+              />
+              <div className="settings-range-labels">
+                <span>0%</span>
+                <span>100%</span>
               </div>
             </div>
           </CollapsibleSection>

@@ -6,10 +6,8 @@
 #include <CRC.h>
 
 // TODO:
-// Implement save position to not be horrible - done
-// Implement full turn off from double tap - new bit packing implemented - need to check pi side
-// Save and retrieve brightness - done
-// Implement CRC for stored data to check for corruption - done
+// Add logic to Pi to use case 3, toggle_light. Indicate that a bulb is switched off by making it glow dark blue. Long press a blue bulb to turn it back on.
+// Bulb occasionally gets stuck at a peak and can't move in the other direction so it errors out - not seen often in wave motion
 
 #define LIMIT_PIN 4
 #define SDA_PIN A4
@@ -27,46 +25,38 @@
 #define SAMPLE_PERIOD 10       // milliseconds
 #define WAIT_FOR_TRIGGER 1000  // milliseconds
 
-#define SCALE 5  // position scale factor is 2^5 or 32
-
 float max_ips = 1.2;
 #define MIN_IPS 0.008  // stops moving when very close. This is about half a turn of the motor shaft
 float min_ips = MIN_IPS;
 #define MAX_SPEED 255  // max analog_write value
 
+#define TOP_CUSTOM 0x0300  // determines pwm frequency. Divide 16 MHz by this number
 
 // Wire winds up according to archimedian spiral equation
-// r = 0.1013/2pi * theta
-// starting at r = 2 or theta  = 128.20, so the path length equation in ticks_to_inches starts there
-// If the spiral were to go from the center to the start, it would have length 17.54,
-// then add the length of the wire, 115" (120 with 5" used for bulb and soldering) to get 132.54
+// r = 0.0927/2pi * theta
+// starting at r = 1.91 (measured) or theta  = 129.459, so the path length equation in ticks_to_inches starts there
+// If the spiral were to go from the center to the start, it would have total length 123.678
 // these values will need to be recalculated for a different length of wire being wound or if the packing factor changes, using a newton's method to determine the r constant and the theta
-#define PACKING_RATE 0.1013                          // inches per wrap. approximately equal to wire diameter
-#define WIRE_MAX_LENGTH 115                          // inches
-#define TOTAL_TURNS 13                               // count
-#define SPIRAL_START_ANGLE 128.20                    // radians to reach a spiral wrap of r=2
-#define STARTING_SPIRAL_LENGTH 132.54                // inches
-const long in_to_tick = 400 * 60 / 4 / M_PI;         // depricated
+#define PACKING_RATE 0.0927                          // inches per wrap. approximately equal to wire diameter
+#define WIRE_MAX_LENGTH 102                          // inches
+#define TOTAL_TURNS 12                               // reference count
+#define SPIRAL_START_ANGLE 129.459                   // radians to reach a spiral wrap of r=1.91
+#define STARTING_SPIRAL_LENGTH 123.678               // inches
 const float ticks_to_radians = 2 * M_PI / 200 / 60;  // 2pi radians in a revolution, 100 line encoder double counted, 60 tooth worm gear
-long max_encoder;
+long max_encoder = 100;
 
-const bool verbose = true;
+const bool verbose = false;
 
-// EEPROM stored values
-uint8_t brightness = 25;
-bool LED_on = true;
-uint16_t stored_crc = 0;
-bool eeprom_error = false;
-#define BRIGHTNESS_BYTE 4
-#define LED_ON_BYTE 5
-#define BYTES_STORED 6  // 4 from double, brightness, LED_on
 
 // Communicated values
 uint8_t address = 0;
 uint8_t payload = 0;
 uint8_t special = 0;
+uint8_t brightness = 100;
+bool LED_on = true;
 bool currently_zeroing = false;
 bool disable_all = false;
+bool hit_max_speed_warning = false;
 
 // PID values
 double speed_goal = 0, real_speed, encoder_val = 0, analog_write_val, last_real_length, setpoint = 0.2;  // positive is in deploy direction
@@ -83,22 +73,18 @@ void setup() {
     Serial.println("Hello World");
   }
 
-  max_encoder = inches_to_ticks(WIRE_MAX_LENGTH);  // max length
-  if (verbose) {
-    Serial.print("tick length: ");
-    Serial.println(max_encoder);
-  }
+  EEPROM.get(0, brightness);
 
-  read_EEPROM();  // gets encoder_val from memory along with brightness and LED state
-
-  TCCR1B = TCCR1B & B11111000 | B00000001;  // for PWM frequency of 31372.55 Hz above the range of human hearing
+  TCCR1A = B10100010;                       // COM1A1=1 (pin9), COM1B1=1 (pin10), WGM11=1 — fast PWM, non-inverting, TOP=ICR1
+  TCCR1B = TCCR1B & B11100000 | B00011001;  // No prescaling
+  ICR1 = TOP_CUSTOM;                        //16 MHz / 20 kHz = 800 counts, rounded down to make sure it's far away from 20 kHz
+  pwm_light(brightness);
 
   pinMode(LIMIT_PIN, INPUT_PULLUP);
   pinMode(MTR_PWM_PIN, OUTPUT);
   pinMode(MTR_DIR_PIN, OUTPUT);
   run_motor(0);
   pinMode(LIGHT_PWM_PIN, OUTPUT);
-  analogWrite(LIGHT_PWM_PIN, brightness * LED_on);
   pinMode(ENC0_PIN, INPUT);
   pinMode(ENC1_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(ENC1_PIN), encoderISR, CHANGE);
@@ -110,7 +96,7 @@ void setup() {
   speedPID.SetMode(AUTOMATIC);
 
   if (verbose) Serial.println("PID setup complete");
-  
+
   read_board_address();
   Wire.begin(address);            // join i2c
   Wire.onReceive(receive_event);  // register events
@@ -127,9 +113,7 @@ void loop() {
   if (digitalRead(LIMIT_PIN))
     limit_switch_interrupt();
   else if (encoder_val > max_encoder) {  // only allow running in reverse if bulb is overextended
-    analogWrite(LIGHT_PWM_PIN, 0);
     speed_goal = constrain((setpoint - ticks_to_inches(encoder_val)) * Kp_pos, -max_ips, 0);
-
     run_at_speed_goal();
   } else {
     speed_goal = constrain((setpoint - ticks_to_inches(encoder_val)) * Kp_pos, -max_ips, max_ips);
@@ -166,15 +150,19 @@ void receive_event(uint8_t howMany) {
 void request_event() {  // dump all info when anything is requested
   uint8_t int_position = last_real_length;
   uint8_t frac_position = (last_real_length - int_position) * 256;
-  uint8_t packed_data = LED_on | currently_zeroing << 1 | disable_all << 2 | eeprom_error << 3;
+  uint8_t packed_speed = real_speed * 32;  // 8 ips is around the max speed. Leaves 5 bits for fractional speed
+  uint8_t packed_data = LED_on | currently_zeroing << 1 | disable_all << 2 | hit_max_speed_warning << 3;
   Wire.write(int_position);
   Wire.write(frac_position);
+  Wire.write(brightness);
+  Wire.write(packed_speed);
   Wire.write(packed_data);
-  uint8_t data[4] = { address, int_position, frac_position, packed_data };
-  uint16_t checksum = calcCRC16((uint8_t *)data, 4, 0x1021);  // polynome matches python's library default
+  uint8_t data[6] = { address, int_position, frac_position, brightness, packed_speed, packed_data };
+  uint16_t checksum = calcCRC16((uint8_t *)data, 6, 0x1021);  // polynome matches the pi side
   Wire.write((uint8_t)(checksum >> 8));
   Wire.write((uint8_t)checksum);
-  disable_all = false; // one-time toggle. Sending disable_all again restarts the chandelier
+  disable_all = false;            // one-time toggle. Sending disable_all again starts the chandelier back up
+  hit_max_speed_warning = false;  // only checks per request_event
 }
 
 void limit_switch_interrupt() {
@@ -193,21 +181,32 @@ void limit_switch_interrupt() {
       ;  // debounce
   }
   if (limit_state == 1) {
-    zero_procedure(-0.5);
+    zero_procedure(-1);
     return;
   } else if (down_count == 1)
     toggle_light();
   else if (down_count >= 2)
     toggle_all_lights();
-  delay(1000);
+  return;       // don't want to leave the light on
+  delay(1100);  // gets polled every 1 second, so need to wait long enough to turn off
 }
 
 void toggle_light() {
+  if (verbose)
+    Serial.println("Toggling light");
   LED_on = !LED_on;
-  analogWrite(LIGHT_PWM_PIN, LED_on * brightness);
+  pwm_light(LED_on * brightness);
+}
+
+void toggle_all_lights() {
+  if (verbose)
+    Serial.println("Disabling all lights");
+  disable_all = true;
 }
 
 void zero_procedure(double zero_rate) {
+  if (verbose)
+    Serial.println("Zeroing");
   currently_zeroing = true;
   speed_goal = 0.5;
   while (digitalRead(LIMIT_PIN) == HIGH)  // run until untriggered
@@ -226,13 +225,8 @@ void zero_procedure(double zero_rate) {
   while (millis() - start_time < 100)  // go .1 seconds longer so the bulb doesn't re-trigger
     run_at_speed_goal();
   currently_zeroing = false;
-}
-
-void toggle_all_lights() {
-  speed_goal = 0;
-  while (digitalRead(LIMIT_PIN) == LOW)
-    run_at_speed_goal();
-  delay(1000);
+  if (verbose)
+    Serial.println("Done zeroing");
 }
 
 void run_motor(int16_t speed) {
@@ -240,7 +234,9 @@ void run_motor(int16_t speed) {
     digitalWrite(MTR_DIR_PIN, DEPLOY);
   else
     digitalWrite(MTR_DIR_PIN, STOW);
-  analogWrite(MTR_PWM_PIN, 255 - min(abs(speed), MAX_SPEED));  // subtract from 255 since 255 is stationary and 0 is max speed
+  if (abs(speed) > 255)
+    hit_max_speed_warning = true;
+  pwm_motor(255 - min(abs(speed), MAX_SPEED));  // subtract from 255 since 255 is stationary and 0 is max speed
 }
 
 double ticks_to_inches(double ticks) {
@@ -283,47 +279,9 @@ void run_at_speed_goal() {
   }
 }
 
-void read_EEPROM() {
-  CRC16 new_crc;
-  for (int i = 0; i < BYTES_STORED; i++)
-    new_crc.add(EEPROM[i]);
-  EEPROM.get(BYTES_STORED, stored_crc);
-  if (new_crc.calc() == stored_crc) {
-    EEPROM.get(0, encoder_val);
-    EEPROM.get(BRIGHTNESS_BYTE, brightness);
-    EEPROM.get(LED_ON_BYTE, LED_on);
-
-    if (verbose) {
-      Serial.println("EEPROM read successful");
-      Serial.println("Position, brightness, LED_on");
-      Serial.print(encoder_val);
-      Serial.print(" ");
-      Serial.print(brightness);
-      Serial.print(" ");
-      Serial.println(LED_on);
-    }
-  } else {
-    if (verbose)
-      Serial.println("EEPROM read failed. Setting to default values");
-    eeprom_error = true;
-    write_EEPROM();
-  }
-  last_real_length = ticks_to_inches(encoder_val);
-  setpoint = encoder_val;  // needs to match otherwise the bulb moves on startup
-}
-
-void write_EEPROM() {
-  EEPROM.put(0, encoder_val);
-  EEPROM.put(BRIGHTNESS_BYTE, brightness);
-  EEPROM.put(LED_ON_BYTE, LED_on);
-  byte crc_array[6] = { 0, 0, 0, 0, brightness, LED_on };
-  memcpy(crc_array, (uint8_t *)&encoder_val, sizeof(double));
-  EEPROM.put(BYTES_STORED, calcCRC16((uint8_t *)crc_array, BYTES_STORED)); // use default polynome
-}
-
 void read_board_address() {
-  #define ADDR_PIN_COUNT 6
-  uint8_t addr_pins[ADDR_PIN_COUNT] = { 11, 12, A0, A1, A2, A3 };  // Do not use pin 13 for input. Add new pin when next board arrives
+#define ADDR_PIN_COUNT 7
+  const uint8_t addr_pins[ADDR_PIN_COUNT] = { 6, 11, 12, A0, A1, A2, A3 };  // Do not use pin 13 for input. Add new pin when next board arrives
 
   address = 0;
   for (int i = 0; i < ADDR_PIN_COUNT; i++) {
@@ -340,26 +298,35 @@ void read_board_address() {
   }
 }
 
+void pwm_motor(uint8_t val) {
+  OCR1A = map(val, 0, 255, 0, TOP_CUSTOM);
+}
+
+void pwm_light(uint8_t val) {
+  if (val == 0)
+    OCR1B = 0;
+  else if (val < 38) // I love me some magic numberrs
+    OCR1B = val + 7;
+  else
+    OCR1B = map((long)val * val, 37*37, 255L * 255L, 45, TOP_CUSTOM);  // quadratic scaling to enhance low end, but only kicks in once the map becomes approximately linear
+}
+
 void Special() {
   switch (special) {
     case 1:  // brightness
       brightness = payload;
-      analogWrite(LIGHT_PWM_PIN, LED_on * brightness);
+      pwm_light(LED_on * brightness);
       break;
-    case 2:  // save encoder position
-      run_motor(0);
-      delay(500);
-      write_EEPROM();
-      delay(4500);
+    case 2:  // tell position
+      encoder_val = inches_to_ticks(setpoint);
+      last_real_length = setpoint;
       break;
-    // case 3:  // change max speed - obsolete since it can be gated by max_ips
-    //   MAX_SPEED = payload / 10;
-    //   speedPID.SetOutputLimits(-MAX_SPEED, MAX_SPEED);
-    //   break;
-    // case 4:
-    //   Kp = payload;
-    //   speedPID.SetTunings(Kp, Ki, Kd);
-    //   break;
+    case 3:
+      toggle_light();
+      break;
+    case 4: // set starting brightness
+      EEPROM.put(0, payload);
+      break;
     // case 5:
     //   Ki = payload * 10;
     //   speedPID.SetTunings(Kp, Ki, Kd);

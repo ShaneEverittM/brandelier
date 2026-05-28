@@ -13,12 +13,13 @@ export type BulbState = Record<BulbId, BulbStateEntry>;
 
 export type BulbStatusEntry = {
   pos: number;
+  bright: number;
   light_on: boolean;
   zeroing: boolean;
   disabled: boolean;
-  eeprom_error: boolean;
   max_speed_warn: boolean;
   drift_detected: boolean;
+  read_error: boolean;
 };
 export type BulbStatusMap = Record<BulbId, BulbStatusEntry>;
 

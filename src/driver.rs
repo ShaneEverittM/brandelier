@@ -147,12 +147,14 @@ enum Mode {
 #[derive(Debug, Clone, Serialize)]
 pub struct BulbStatus {
     pub pos: f64,
+    pub bright: f64,
+    pub speed: f64,
     pub light_on: bool,
     pub zeroing: bool,
     pub disabled: bool,
-    pub eeprom_error: bool,
     pub max_speed_warn: bool,
     pub drift_detected: bool,
+    pub read_error: bool,
 }
 
 pub struct Driver {
@@ -296,16 +298,30 @@ impl Message<ZeroSome> for Driver {
     }
 }
 
-pub struct SavePositions;
+/// On startup when stored positions are known: tell each bulb where it is
+/// and configure the max cord length. Avoids a full re-zero.
+pub struct TellPositions {
+    pub positions: HashMap<BulbId, f64>,
+    pub max_in: f64,
+}
 
-impl Message<SavePositions> for Driver {
+impl Message<TellPositions> for Driver {
     type Reply = Result<()>;
 
-    async fn handle(&mut self, _: SavePositions, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+    async fn handle(
+        &mut self,
+        msg: TellPositions,
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Result<()> {
+        self.max_extension = msg.max_in.clamp(0.0, MAX_EXTENSION);
         let mut state = self.idle().await?;
-        for bulb in state.bulbs.values_mut() {
-            bulb.write(Command::SavePosition {
-                extension: bulb.real_extension(),
+        for (id, bulb) in &mut state.bulbs {
+            let extension = msg.positions.get(id).copied().unwrap_or(0.0).clamp(0.0, 1.0)
+                * self.max_extension;
+            bulb.write(Command::TellPosition { extension }).await?;
+            bulb.write(Command::SetMaxExtension {
+                extension,
+                max: self.max_extension,
             })
             .await?;
         }
@@ -375,12 +391,14 @@ impl Message<ReadAll> for Driver {
                         id.clone(),
                         BulbStatus {
                             pos: bulb.real_extension() / self.max_extension,
+                            bright: bulb.real_brightness() as f64 / MAX_BRIGHTNESS,
+                            speed: bulb.real_speed(),
                             light_on: bulb.light_on(),
                             zeroing: bulb.zeroing(),
                             disabled: bulb.disable_all(),
-                            eeprom_error: bulb.eeprom_error(),
                             max_speed_warn: bulb.max_speed_warn(),
                             drift_detected: bulb.drift_detected(),
+                            read_error: bulb.read_error(),
                         },
                     )
                 })
@@ -414,6 +432,32 @@ impl Message<ConfigureMaxExt> for Driver {
             bulb.write(Command::SetMaxExtension {
                 extension: bulb.real_extension(),
                 max: self.max_extension,
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        Ok(())
+    }
+}
+
+pub struct SetStartBrightness {
+    pub brightness: f64,
+}
+
+impl Message<SetStartBrightness> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(
+        &mut self,
+        msg: SetStartBrightness,
+        _: &mut Context<Self, Self::Reply>,
+    ) -> Result<()> {
+        let brightness = msg.brightness.clamp(0.0, 1.0) * MAX_BRIGHTNESS;
+        let mut state = self.idle().await?;
+        for bulb in state.bulbs.values_mut() {
+            bulb.write(Command::SetStartBrightness {
+                extension: bulb.real_extension(),
+                brightness,
             })
             .await?;
         }

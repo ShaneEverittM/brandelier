@@ -22,6 +22,7 @@ use tokio::io;
 use tokio::net::TcpListener;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use tracing::error;
 use tracing_subscriber::EnvFilter;
 use validator::ValidationErrors;
 
@@ -31,8 +32,9 @@ use crate::driver::ConfigureMaxExt;
 use crate::driver::Cycle;
 use crate::driver::Driver;
 use crate::driver::ReadAll;
-use crate::driver::SavePositions;
 use crate::driver::SetAll;
+use crate::driver::SetStartBrightness;
+use crate::driver::TellPositions;
 use crate::driver::Stop;
 use crate::driver::Zero;
 use crate::driver::ZeroSome;
@@ -82,6 +84,12 @@ pub enum Error {
     ConfigureMaxExtError(#[from] SendError<ConfigureMaxExt, driver::Error>),
 
     #[error(transparent)]
+    TellPositionsError(#[from] SendError<TellPositions, driver::Error>),
+
+    #[error(transparent)]
+    SetStartBrightnessError(#[from] SendError<SetStartBrightness, driver::Error>),
+
+    #[error(transparent)]
     Io(#[from] io::Error),
 
     #[error(transparent)]
@@ -127,8 +135,10 @@ struct AppState {
     wave: Arc<Mutex<Option<WaveRunState>>>,
     dimmer: Arc<Mutex<f64>>,
     disable_ctrl: Arc<Mutex<DisableAllCtrl>>,
+    position_store: Arc<Mutex<PositionStore>>,
 }
 
+const POSITION_STORE_FILE: &str = "presets/positions.json";
 const POSITION_PRESETS_DIR: &str = "presets/position";
 const BRIGHTNESS_PRESETS_DIR: &str = "presets/brightness";
 const WAVE_PRESETS_DIR: &str = "presets/wave";
@@ -140,13 +150,16 @@ struct Settings {
     max_length_in: f64,
     #[serde(default = "Settings::default_dimmer")]
     dimmer: f64,
+    #[serde(default = "Settings::default_startup_brightness")]
+    startup_brightness: f64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            max_length_in: 37.0,
+            max_length_in: 10.0,
             dimmer: 1.0,
+            startup_brightness: 1.0,
         }
     }
 }
@@ -154,6 +167,40 @@ impl Default for Settings {
 impl Settings {
     fn default_dimmer() -> f64 {
         1.0
+    }
+    fn default_startup_brightness() -> f64 {
+        1.0
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct PositionStore {
+    bulbs_moving: bool,
+    #[serde(default)]
+    positions: HashMap<BulbId, f64>,
+}
+
+impl Default for PositionStore {
+    fn default() -> Self {
+        Self { bulbs_moving: true, positions: HashMap::new() }
+    }
+}
+
+impl PositionStore {
+    fn load() -> Self {
+        std::fs::read_to_string(POSITION_STORE_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self) {
+        if let Ok(s) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::create_dir_all("presets");
+            if let Err(e) = std::fs::write(POSITION_STORE_FILE, s) {
+                error!("Failed to save position store: {e}");
+            }
+        }
     }
 }
 
@@ -249,10 +296,18 @@ async fn wave_start(
         driver,
         wave,
         dimmer,
+        position_store,
         ..
     }): State<AppState>,
     Json(req): Json<wave::StartWaveRequest>,
 ) -> Result<Json<wave::WaveStarted>> {
+    if req.waves.iter().any(|w| w.target == wave::WaveTarget::Extension) {
+        let mut store = position_store.lock().unwrap();
+        if !store.bulbs_moving {
+            store.bulbs_moving = true;
+            store.save();
+        }
+    }
     // Cancel any previously running wave.
     if let Some(old) = wave.lock().unwrap().take() {
         old.token.cancel();
@@ -314,17 +369,31 @@ async fn status(
 }
 
 async fn zero(
-    State(AppState { driver, .. }): State<AppState>,
+    State(AppState { driver, position_store, .. }): State<AppState>,
     Json(bulbs): Json<HashMap<BulbId, BulbCommand>>,
 ) -> Result<()> {
+    {
+        let mut store = position_store.lock().unwrap();
+        if !store.bulbs_moving {
+            store.bulbs_moving = true;
+            store.save();
+        }
+    }
     driver.ask(ZeroSome { bulbs }).await?;
     Ok(())
 }
 
 async fn bulbs(
-    State(AppState { driver, .. }): State<AppState>,
+    State(AppState { driver, position_store, .. }): State<AppState>,
     Json(bulbs): Json<HashMap<BulbId, BulbCommand>>,
 ) -> Result<()> {
+    {
+        let mut store = position_store.lock().unwrap();
+        if !store.bulbs_moving {
+            store.bulbs_moving = true;
+            store.save();
+        }
+    }
     driver.ask(SetAll { bulbs }).await?;
     Ok(())
 }
@@ -382,6 +451,27 @@ async fn set_dimmer(
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+struct StartupBrightnessBody {
+    brightness: f64,
+}
+
+async fn set_startup_brightness(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(body): Json<StartupBrightnessBody>,
+) -> Result<()> {
+    driver
+        .ask(SetStartBrightness {
+            brightness: body.brightness,
+        })
+        .await?;
+    let mut settings = load_settings();
+    settings.startup_brightness = body.brightness;
+    std::fs::create_dir_all("presets")?;
+    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&settings)?)?;
+    Ok(())
+}
+
 /// Static UI assets bundled at compile time.
 ///
 /// In release builds these are baked into the binary (single artifact for
@@ -420,36 +510,34 @@ async fn enter_disable(
     wave: &Arc<Mutex<Option<WaveRunState>>>,
     dimmer: &Arc<Mutex<f64>>,
     disable_ctrl: &Arc<Mutex<DisableAllCtrl>>,
-    status: &HashMap<BulbId, BulbStatus>,
 ) {
     let current_dimmer = *dimmer.lock().unwrap();
+    *dimmer.lock().unwrap() = 0.0;
     let (wave_config, wave_elapsed_at_save) = {
-        let guard = wave.lock().unwrap();
-        if let Some(w) = guard.as_ref() {
+        let mut guard = wave.lock().unwrap();
+        if let Some(w) = guard.take() {
             let now_unix = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs_f64();
-            (Some(w.config.clone()), now_unix - w.started_at)
+            let elapsed = now_unix - w.started_at;
+            w.token.cancel();
+            (Some(w.config), elapsed)
         } else {
             (None, 0.0)
         }
     };
-    if let Some(old) = wave.lock().unwrap().take() {
-        old.token.cancel();
-    }
+    let status = driver.ask(ReadAll).await.unwrap_or_default();
+    let all_dark: HashMap<BulbId, BulbCommand> = status
+        .into_iter()
+        .map(|(id, s)| (id, BulbCommand { pos: s.pos, bright: 0.0 }))
+        .collect();
+    let _ = driver.ask(SetAll { bulbs: all_dark }).await;
     {
         let mut ctrl = disable_ctrl.lock().unwrap();
         ctrl.disabled = true;
         ctrl.saved = Some(DisabledAllSave { wave_config, wave_elapsed_at_save, dimmer: current_dimmer });
     }
-    *dimmer.lock().unwrap() = 0.0;
-    let _ = driver.ask(SavePositions).await;
-    let all_zero: HashMap<BulbId, BulbCommand> = status
-        .iter()
-        .map(|(id, s)| (id.clone(), BulbCommand { pos: s.pos, bright: 0.0 }))
-        .collect();
-    let _ = driver.ask(SetAll { bulbs: all_zero }).await;
 }
 
 async fn restore_from_disable(
@@ -505,7 +593,7 @@ async fn disable_all_monitor(
         if disable_ctrl.lock().unwrap().disabled {
             restore_from_disable(&driver, &wave, &dimmer, &disable_ctrl).await;
         } else {
-            enter_disable(&driver, &wave, &dimmer, &disable_ctrl, &status).await;
+            enter_disable(&driver, &wave, &dimmer, &disable_ctrl).await;
         }
     }
 }
@@ -534,8 +622,52 @@ async fn post_trigger_disable(
     if disable_ctrl.lock().unwrap().disabled {
         return;
     }
-    let Ok(status) = driver.ask(ReadAll).await else { return };
-    enter_disable(&driver, &wave, &dimmer, &disable_ctrl, &status).await;
+    enter_disable(&driver, &wave, &dimmer, &disable_ctrl).await;
+}
+
+async fn position_monitor(
+    driver: ActorRef<Driver>,
+    wave: Arc<Mutex<Option<WaveRunState>>>,
+    position_store: Arc<Mutex<PositionStore>>,
+) {
+    let mut all_stopped_since: Option<Instant> = None;
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // While a wave is running, bulbs are moving — skip polling.
+        if wave.lock().unwrap().is_some() {
+            all_stopped_since = None;
+            continue;
+        }
+
+        let Ok(status) = driver.ask(ReadAll).await else {
+            continue;
+        };
+
+        let any_moving = status.values().any(|s| s.speed > 0.0);
+
+        if any_moving {
+            all_stopped_since = None;
+            let mut store = position_store.lock().unwrap();
+            if !store.bulbs_moving {
+                store.bulbs_moving = true;
+                store.save();
+            }
+        } else {
+            let now = Instant::now();
+            let since = all_stopped_since.get_or_insert(now);
+            if now.duration_since(*since) >= Duration::from_millis(100) {
+                let mut store = position_store.lock().unwrap();
+                if store.bulbs_moving {
+                    store.positions = status.into_iter().map(|(id, s)| (id, s.pos)).collect();
+                    store.bulbs_moving = false;
+                    store.save();
+                }
+                all_stopped_since = None;
+            }
+        }
+    }
 }
 
 fn init_tracing() {
@@ -556,14 +688,22 @@ async fn main() -> Result<()> {
     let bus = Bus::spawn(Bus::autodetect(&config.i2c)?);
     let driver = Driver::spawn(Driver::new(&bus, &config.driver, &config.topology));
 
-    driver.ask(ReadAll).await?;
-
     let settings = load_settings();
-    driver
-        .ask(ConfigureMaxExt {
+
+    let position_store_data = PositionStore::load();
+    let needs_zero = position_store_data.bulbs_moving || position_store_data.positions.is_empty();
+
+    if needs_zero {
+        driver.ask(Zero).await?;
+        driver.ask(ConfigureMaxExt { max_in: settings.max_length_in }).await?;
+    } else {
+        driver.ask(TellPositions {
+            positions: position_store_data.positions.clone(),
             max_in: settings.max_length_in,
-        })
-        .await?;
+        }).await?;
+    }
+
+    let position_store = Arc::new(Mutex::new(position_store_data));
 
     let disable_ctrl = Arc::new(Mutex::new(DisableAllCtrl {
         disabled: false,
@@ -577,13 +717,20 @@ async fn main() -> Result<()> {
         wave: Arc::new(Mutex::new(None)),
         dimmer: Arc::new(Mutex::new(settings.dimmer)),
         disable_ctrl: disable_ctrl.clone(),
+        position_store: position_store.clone(),
     };
 
     tokio::spawn(disable_all_monitor(
-        driver,
+        driver.clone(),
         state.wave.clone(),
         state.dimmer.clone(),
         disable_ctrl,
+    ));
+
+    tokio::spawn(position_monitor(
+        driver,
+        state.wave.clone(),
+        position_store,
     ));
 
     let api = Router::new()
@@ -607,6 +754,7 @@ async fn main() -> Result<()> {
         .route("/settings", get(get_settings))
         .route("/settings/max-length", post(set_max_length))
         .route("/settings/dimmer", post(set_dimmer))
+        .route("/settings/startup-brightness", post(set_startup_brightness))
         .fallback(|| async { StatusCode::NOT_FOUND });
 
     let router = Router::new()

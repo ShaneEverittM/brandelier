@@ -37,7 +37,11 @@ pub enum Command {
         extension: f64,
         brightness: f64,
     } = 0x01,
-    SavePosition {
+    SetStartBrightness {
+        extension: f64,
+        brightness: f64,
+    } = 0x04,
+    TellPosition {
         extension: f64,
     } = 0x02,
     #[expect(unused)]
@@ -70,7 +74,8 @@ impl Command {
 
         let (SetExtension { extension }
         | SetBrightness { extension, .. }
-        | SavePosition { extension }
+        | SetStartBrightness { extension, .. }
+        | TellPosition { extension }
         | SetKpPos { extension, .. }
         | SetMaxSpeed { extension, .. }
         | Zero { extension }
@@ -88,7 +93,7 @@ impl Command {
         use Command::*;
 
         match self {
-            SetBrightness { brightness, .. } => Some(*brightness as u8),
+            SetBrightness { brightness, .. } | SetStartBrightness { brightness, .. } => Some(*brightness as u8),
             SetKpPos { kp_pos, .. } => Some((*kp_pos * 10.0) as u8),
             SetMaxSpeed { speed, .. } => Some((*speed * 10.0) as u8),
             SetMaxExtension { max, .. } => Some(max.clamp(0.0, 115.0) as u8),
@@ -117,7 +122,6 @@ pub struct Response {
     pub light: bool,
     pub zeroing: bool,
     pub disable_all: bool,
-    pub eeprom_error: bool,
     pub max_speed_warn: bool,
 }
 
@@ -133,11 +137,10 @@ impl Response {
             extension: (data[0] as f64) + (data[1] as f64) / 256.0,
             brightness: data[2],
             speed: (data[3] as f64) / 32.0,
-            light: data[4] & 0b00001 != 0,
-            zeroing: data[4] & 0b00010 != 0,
-            disable_all: data[4] & 0b00100 != 0,
-            eeprom_error: data[4] & 0b01000 != 0,
-            max_speed_warn: data[4] & 0b10000 != 0,
+            light: data[4] & 0b0001 != 0,
+            zeroing: data[4] & 0b0010 != 0,
+            disable_all: data[4] & 0b0100 != 0,
+            max_speed_warn: data[4] & 0b1000 != 0,
         })
     }
 }
@@ -153,9 +156,9 @@ pub struct Bulb {
     light_on: bool,
     zeroing: bool,
     disable_all: bool,
-    eeprom_error: bool,
     max_speed_warn: bool,
     drift_detected: bool,
+    read_error: bool,
     has_commanded: bool,
 
     extension_tolerance: f64,
@@ -180,9 +183,9 @@ impl Bulb {
             light_on: false,
             zeroing: false,
             disable_all: false,
-            eeprom_error: false,
             max_speed_warn: false,
             drift_detected: false,
+            read_error: false,
             has_commanded: false,
             extension_tolerance,
             last_requested_extension: 0.0,
@@ -231,8 +234,10 @@ impl Bulb {
     pub async fn refresh(&mut self, report_drift: bool) -> Result<()> {
         let Ok(response) = self.read().await else {
             warn!("Failed to read");
+            self.read_error = true;
             return Ok(());
         };
+        self.read_error = false;
 
         self.real_extension = response.extension;
         self.real_brightness = response.brightness;
@@ -240,7 +245,6 @@ impl Bulb {
         self.light_on = response.light;
         self.zeroing = response.zeroing;
         self.disable_all = response.disable_all;
-        self.eeprom_error = response.eeprom_error;
         self.max_speed_warn = response.max_speed_warn;
 
         let drift = self.has_commanded
@@ -272,16 +276,24 @@ impl Bulb {
         self.real_extension
     }
 
+    pub fn real_speed(&self) -> f64 {
+        self.real_speed
+    }
+
+    pub fn real_brightness(&self) -> u8 {
+        self.real_brightness
+    }
+
+    pub fn read_error(&self) -> bool {
+        self.read_error
+    }
+
     pub fn light_on(&self) -> bool {
         self.light_on
     }
 
     pub fn disable_all(&self) -> bool {
         self.disable_all
-    }
-
-    pub fn eeprom_error(&self) -> bool {
-        self.eeprom_error
     }
 
     pub fn max_speed_warn(&self) -> bool {

@@ -244,8 +244,8 @@ export function Chandelier({
           const opacity = state.bright;
           const r = BULB_R_BASE * bot.scale;
           const hw = bulbStatus?.[bulb.id];
-          const statusColor = hw?.eeprom_error
-            ? 'oklch(0.60 0.25 25)'
+          const statusColor = hw?.read_error
+            ? 'oklch(0.65 0.28 330)'
             : hw?.disabled
               ? 'oklch(0.50 0 0)'
               : hw?.max_speed_warn

@@ -15,7 +15,7 @@ const STATUS_NOTICES: {
   label: string;
   description: string;
 }[] = [
-  { key: 'eeprom_error',    color: 'oklch(0.60 0.25 25)',  label: 'EEPROM error',       description: 'Configuration storage is corrupted. Try re-zeroing the bulb.' },
+  { key: 'read_error',      color: 'oklch(0.65 0.28 330)', label: 'Not responding',      description: 'Bulb is not responding over I2C. Check power and connections.' },
   { key: 'disabled',        color: 'oklch(0.50 0 0)',      label: 'Disabled',            description: 'The disable switch on this bulb is engaged.' },
   { key: 'max_speed_warn',  color: 'oklch(0.72 0.22 50)',  label: 'Max speed',           description: 'Motor is running at full speed. Check for obstructions or a stuck cord.' },
   { key: 'zeroing',         color: 'oklch(0.65 0.20 230)', label: 'Zeroing',             description: 'Bulb is homing to its reference position.' },
