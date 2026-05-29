@@ -3,86 +3,90 @@ import type * as React from 'react';
 
 import type { Camera } from '../types.ts';
 
-export { type Options, useOrbitDrag };
+export { type Options, type OrbitHandlers, useOrbitDrag };
 
-/** Options for {@link useOrbitDrag}. */
 type Options = {
-  /** The multiplier for yaw rotation applied to {@link React.MouseEvent.clientX} translations. */
   yawSensitivity?: number;
-
-  /** The multiplier for tilt rotation applied to {@link React.MouseEvent.clientY} translations. */
   tiltSensitivity?: number;
-
-  /** State tracking for if an orbit is in progress. */
   onOrbitingChange?: (orbiting: boolean) => void;
 };
 
-/**
- * A hook for controlling mouse drag behavior to rotate an orbiting camera.
- *
- * Install it with your other hooks and wire up the returned handler to "mousedown".
- *
- * @param camera the camera position
- * @param setCamera the callback to set the camera position when the mouse drags
- * @param options {@link Options}
- */
+type OrbitHandlers = {
+  onMouseDown: (e: React.MouseEvent) => void;
+  onTouchStart: (e: React.TouchEvent) => void;
+};
+
 function useOrbitDrag(
   camera: Camera,
   setCamera: (next: Camera) => void,
   options: Options = {},
-): (_: React.MouseEvent) => void {
+): OrbitHandlers {
   const { yawSensitivity = 0.012, tiltSensitivity = 0.008, onOrbitingChange } = options;
 
-  // Track in-flight event handlers...
   const activeRef = useRef<{
-    onMove: (_: MouseEvent) => void;
-    onDragEnd: () => void;
+    onMove: (e: MouseEvent | TouchEvent) => void;
+    onEnd: () => void;
   } | null>(null);
 
-  // ...so we can clean them up if the calling component gets unmounted.
   useEffect(
     () => () => {
       const active = activeRef.current;
       if (!active) return;
       window.removeEventListener('mousemove', active.onMove);
-      window.removeEventListener('mouseup', active.onDragEnd);
+      window.removeEventListener('mouseup', active.onEnd);
+      window.removeEventListener('touchmove', active.onMove);
+      window.removeEventListener('touchend', active.onEnd);
+      window.removeEventListener('touchcancel', active.onEnd);
       activeRef.current = null;
     },
     [],
   );
 
-  return (e: React.MouseEvent) => {
-    // This is meant to be installed as a JSX mousedown handler,
-    // so consider the event handled.
-    e.stopPropagation();
-    e.preventDefault();
-
+  const startDrag = (startClientX: number, startClientY: number) => {
     onOrbitingChange?.(true);
-
-    // Capture location from the start of the drag.
-    const startX = e.clientX;
-    const startY = e.clientY;
     const start = { ...camera };
 
-    const onMove = (me: MouseEvent) => {
-      const dx = me.clientX - startX;
-      const dy = me.clientY - startY;
-      const next = nextCamera(start, dx, dy, yawSensitivity, tiltSensitivity);
-      setCamera(next);
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if ('touches' in e) {
+        if (e.cancelable) e.preventDefault();
+        if (e.touches.length === 0) return;
+      }
+      const p = 'touches' in e ? e.touches[0] : e;
+      const dx = p.clientX - startClientX;
+      const dy = p.clientY - startClientY;
+      setCamera(nextCamera(start, dx, dy, yawSensitivity, tiltSensitivity));
     };
 
-    // Clean up both event listeners on mouse release
-    // and mark the orbit as complete.
-    const onDragEnd = () => {
+    const onEnd = () => {
       onOrbitingChange?.(false);
       window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onDragEnd);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
       activeRef.current = null;
     };
 
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onDragEnd);
-    activeRef.current = { onMove, onDragEnd };
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+    activeRef.current = { onMove, onEnd };
+  };
+
+  return {
+    onMouseDown: (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      startDrag(e.clientX, e.clientY);
+    },
+    onTouchStart: (e: React.TouchEvent) => {
+      e.stopPropagation();
+      const touch = e.touches[0];
+      if (!touch) return;
+      startDrag(touch.clientX, touch.clientY);
+    },
   };
 }
 

@@ -43,6 +43,9 @@ function App() {
   const [history, setHistory] = useState<BulbState[]>([]);
   const [future, setFuture] = useState<BulbState[]>([]);
   const [mode, setMode] = useState<Mode>('presets');
+  const [railOpen, setRailOpen] = useState(false);
+  const [superseded, setSuperseded] = useState(false);
+  const sessionTokenRef = useRef<number | null>(null);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([
     { id: 'g0', name: 'All', ids: BULBS.map((b) => b.id), builtin: true },
@@ -185,6 +188,14 @@ function App() {
       .catch(() => { waveBrightSnapshotRef.current = null; });
   }, [waveBrightPresetName]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 768px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   const [camera, setCamera] = useState<Camera>({ yaw: -0.35, elevation: 0.28 });
   const [orbiting, setOrbiting] = useState(false);
   const orbitDrag = useOrbitDrag(camera, setCamera, {
@@ -192,6 +203,7 @@ function App() {
     tiltSensitivity: 0.005,
     onOrbitingChange: setOrbiting,
   });
+  const stageTouchRef = useRef<{ x: number; y: number } | null>(null);
 
   // Mirror of bulbState in a ref so handlers (e.g. drag-end) can read the
   // very latest state synchronously, without depending on closure capture
@@ -202,14 +214,27 @@ function App() {
   }, [bulbState]);
   const dimmerAbortRef = useRef<AbortController | null>(null);
 
+  const claimSession = useCallback(() => {
+    fetch('/api/session', { method: 'POST' })
+      .then((r) => r.json() as Promise<{ token: number }>)
+      .then(({ token }) => { sessionTokenRef.current = token; setSuperseded(false); })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => { claimSession(); }, [claimSession]);
+
   // Poll /api/status on mount (sync pos) then every second (errors / zeroing)
   const initialSyncDone = useRef(false);
   useEffect(() => {
     const fetchStatus = () => {
       fetch('/api/status')
-        .then((r) => r.json() as Promise<BulbStatusMap>)
-        .then((data) => {
-          setBulbStatus(data);
+        .then((r) => r.json() as Promise<{ bulbs: BulbStatusMap; session: number }>)
+        .then(({ bulbs, session }) => {
+          setBulbStatus(bulbs);
+          if (sessionTokenRef.current !== null && session !== sessionTokenRef.current) {
+            setSuperseded(true);
+          }
+          const data = bulbs;
           if (!initialSyncDone.current) {
             initialSyncDone.current = true;
             setBulbState((cur) => {
@@ -756,18 +781,23 @@ function App() {
         </div>
 
         <nav className="modebar" role="tablist">
-          <button role="tab" aria-pressed={mode === 'presets'} onClick={() => setMode('presets')}>
-            Presets
-          </button>
-          <button role="tab" aria-pressed={mode === 'wave'} onClick={() => setMode('wave')}>
-            Wave
-          </button>
-          <button role="tab" aria-pressed={mode === 'schedule'} onClick={() => setMode('schedule')}>
-            Schedule
-          </button>
-          <button role="tab" aria-pressed={mode === 'settings'} onClick={() => setMode('settings')}>
-            Settings
-          </button>
+          {(['presets', 'wave', 'schedule', 'settings'] as Mode[]).map((m) => (
+            <button
+              key={m}
+              role="tab"
+              aria-pressed={mode === m && (!isMobile || railOpen)}
+              onClick={() => {
+                if (m === mode) {
+                  setRailOpen((o) => !o);
+                } else {
+                  setMode(m);
+                  setRailOpen(true);
+                }
+              }}
+            >
+              {m.charAt(0).toUpperCase() + m.slice(1)}
+            </button>
+          ))}
         </nav>
 
         <div className="topbar-right">
@@ -885,16 +915,48 @@ function App() {
         }}
         onMouseDown={(e) => {
           if (e.button === 2 || (e.shiftKey && e.target === e.currentTarget) || e.altKey) {
-            orbitDrag(e);
+            orbitDrag.onMouseDown(e);
+          }
+        }}
+        onTouchStart={(e) => {
+          if (e.touches.length !== 1) return;
+          const t = e.touches[0];
+          stageTouchRef.current = { x: t.clientX, y: t.clientY };
+          orbitDrag.onTouchStart(e);
+        }}
+        onTouchEnd={(e) => {
+          const start = stageTouchRef.current;
+          stageTouchRef.current = null;
+          if (!start) return;
+          const t = e.changedTouches[0];
+          if (!t) return;
+          const moved = Math.abs(t.clientX - start.x) + Math.abs(t.clientY - start.y);
+          if (moved < 10) {
+            if (previewingPreset) cancelPreview();
           }
         }}
         onContextMenu={(e) => e.preventDefault()}
         onClick={() => { if (previewingPreset) cancelPreview(); }}
       >
-        <div className="stage-meta">
-          <span className="l">Selection</span>
-          <span className="v">{selection.size} of 19 fixtures</span>
-        </div>
+        {isMobile ? (() => {
+          const n = selection.size;
+          if (n === 0) return null;
+          let posSum = 0, brightSum = 0;
+          selection.forEach((id) => { const s = bulbState[id]; if (s) { posSum += s.pos; brightSum += s.bright; } });
+          const drop = ((posSum / n) * maxLength).toFixed(1);
+          const bright = Math.round((brightSum / n) * 100);
+          return (
+            <div className="stage-meta">
+              <span className="l">{n} {n === 1 ? 'fixture' : 'fixtures'}</span>
+              <span className="v">{drop}<span style={{ fontWeight: 400, opacity: 0.6 }}> in</span> · {bright}<span style={{ fontWeight: 400, opacity: 0.6 }}>%</span></span>
+            </div>
+          );
+        })() : (
+          <div className="stage-meta">
+            <span className="l">Selection</span>
+            <span className="v">{selection.size} of 19 fixtures</span>
+          </div>
+        )}
 
         <Chandelier
           bulbState={bulbState}
@@ -906,6 +968,7 @@ function App() {
           onDragEnd={handleDragEnd}
           renderStyle={RENDER_STYLE}
           camera={camera}
+          viewBox={isMobile ? '220 0 480 620' : undefined}
         />
 
         {/* Camera widget */}
@@ -936,7 +999,7 @@ function App() {
       </main>
 
       {/* Right rail */}
-      <aside className="rail">
+      <aside className={`rail${railOpen ? ' rail-open' : ''}`}>
         {mode === 'settings' && (
           <CollapsibleSection title="Settings">
             <div className="settings-row">
@@ -1162,6 +1225,19 @@ function App() {
           </>
         )}
       </aside>
+
+      {railOpen && (
+        <div className="rail-backdrop" onClick={() => setRailOpen(false)} />
+      )}
+
+      {superseded && (
+        <div className="superseded-overlay" onClick={claimSession}>
+          <div className="superseded-card">
+            <span className="superseded-title">Another device has taken control</span>
+            <span className="superseded-action">Tap to take control</span>
+          </div>
+        </div>
+      )}
 
       {disabledAll && (
         <div className="disable-overlay" onClick={handleRestoreFromDisable} />

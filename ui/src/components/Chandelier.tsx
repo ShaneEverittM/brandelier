@@ -3,7 +3,7 @@
    Camera: yaw (rotate around Y) + elevation (tilt). Front view is yaw=0,elev=12°.
 */
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import React, { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 
 import { BULBS } from '../topology';
 import type { Bulb, BulbId, BulbState, BulbStatusMap, Camera, DragAxis, DragDelta, RenderStyle } from '../types';
@@ -87,6 +87,7 @@ type ChandelierProps = {
   onLongPress?: (id: BulbId) => void;
   renderStyle: RenderStyle;
   camera: Camera;
+  viewBox?: string;
 };
 
 // ── Chandelier component ────────────────────────────────────────────
@@ -101,74 +102,113 @@ export function Chandelier({
   onLongPress,
   renderStyle,
   camera,
+  viewBox,
 }: ChandelierProps) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // On touch, deselecting an already-selected bulb is deferred until touchend so
+  // that dragging a selected bulb doesn't unexpectedly remove it from the selection.
+  const pendingDeselectRef = useRef<BulbId | null>(null);
 
-  const handleBulbDown = (e: ReactMouseEvent, bulb: Bulb) => {
-    e.stopPropagation();
-    const additive = e.shiftKey || e.metaKey;
+  const startBulbDrag = (bulb: Bulb, clientX: number, clientY: number, additive: boolean) => {
     onSelect(bulb.id, additive);
-
     longPressRef.current = setTimeout(() => {
       onLongPress?.(bulb.id);
       longPressRef.current = null;
     }, 700);
+    setDrag({ id: bulb.id, startX: clientX, startY: clientY, axis: null, lastX: clientX, lastY: clientY });
+  };
 
-    setDrag({
-      id: bulb.id,
-      startX: e.clientX,
-      startY: e.clientY,
-      axis: null,
-      lastX: e.clientX,
-      lastY: e.clientY,
-    });
+  const handleBulbDown = (e: ReactMouseEvent, bulb: Bulb) => {
+    e.stopPropagation();
+    startBulbDrag(bulb, e.clientX, e.clientY, e.shiftKey || e.metaKey);
+  };
+
+  const handleBulbTouchStart = (e: React.TouchEvent, bulb: Bulb) => {
+    e.stopPropagation();
+    e.preventDefault(); // block synthetic mouse events
+    const t = e.touches[0];
+    if (!t) return;
+    if (selection.has(bulb.id)) {
+      // Already selected: don't deselect yet — wait to see if this is a tap or a drag.
+      pendingDeselectRef.current = bulb.id;
+      longPressRef.current = setTimeout(() => { onLongPress?.(bulb.id); longPressRef.current = null; }, 700);
+      setDrag({ id: bulb.id, startX: t.clientX, startY: t.clientY, axis: null, lastX: t.clientX, lastY: t.clientY });
+    } else {
+      pendingDeselectRef.current = null;
+      startBulbDrag(bulb, t.clientX, t.clientY, true);
+    }
   };
 
   const handleTopHoleDown = (e: ReactMouseEvent, bulb: Bulb) => {
     e.stopPropagation();
-    const additive = e.shiftKey || e.metaKey;
-    onSelect(bulb.id, additive);
+    onSelect(bulb.id, e.shiftKey || e.metaKey);
+  };
+
+  const handleTopHoleTouchStart = (e: React.TouchEvent, bulb: Bulb) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect(bulb.id, true);
   };
 
   useEffect(() => {
     if (!drag) return;
-    const onMove = (e: MouseEvent) => {
-      if (longPressRef.current) {
-        const moved = Math.abs(e.clientX - drag.startX) + Math.abs(e.clientY - drag.startY);
-        if (moved > 6) {
-          clearTimeout(longPressRef.current);
-          longPressRef.current = null;
-        }
+
+    const getPoint = (e: MouseEvent | TouchEvent) => {
+      if ('touches' in e) {
+        const t = e.touches[0] ?? e.changedTouches[0];
+        return t ? { clientX: t.clientX, clientY: t.clientY, ctrlKey: false } : null;
       }
-      const dx = e.clientX - drag.lastX;
-      const dy = e.clientY - drag.lastY;
+      return { clientX: e.clientX, clientY: e.clientY, ctrlKey: e.ctrlKey };
+    };
+
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if ('touches' in e && e.cancelable) e.preventDefault();
+      const p = getPoint(e);
+      if (!p) return;
+      if (longPressRef.current) {
+        const moved = Math.abs(p.clientX - drag.startX) + Math.abs(p.clientY - drag.startY);
+        if (moved > 6) { clearTimeout(longPressRef.current); longPressRef.current = null; }
+      }
+      const dx = p.clientX - drag.lastX;
+      const dy = p.clientY - drag.lastY;
       let axis = drag.axis;
       if (!axis) {
-        const totalDx = Math.abs(e.clientX - drag.startX);
-        const totalDy = Math.abs(e.clientY - drag.startY);
-        if (totalDx + totalDy > 4) {
-          axis = totalDy > totalDx ? 'y' : 'x';
-        }
+        const totalDx = Math.abs(p.clientX - drag.startX);
+        const totalDy = Math.abs(p.clientY - drag.startY);
+        if (totalDx + totalDy > 4) axis = totalDy > totalDx ? 'y' : 'x';
       }
-      onDrag({ dx, dy, axis, ctrl: e.ctrlKey });
-      drag.lastX = e.clientX;
-      drag.lastY = e.clientY;
+      onDrag({ dx, dy, axis, ctrl: p.ctrlKey });
+      drag.lastX = p.clientX;
+      drag.lastY = p.clientY;
       drag.axis = axis;
     };
+
     const onUp = () => {
       if (longPressRef.current) clearTimeout(longPressRef.current);
       longPressRef.current = null;
+      // Deselect only if the touch didn't move enough to become a drag (axis still null = tap).
+      if (drag.axis === null && pendingDeselectRef.current !== null) {
+        onSelect(pendingDeselectRef.current, true);
+      }
+      pendingDeselectRef.current = null;
       onDragEnd();
       setDrag(null);
     };
+
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+    window.addEventListener('touchcancel', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      window.removeEventListener('touchcancel', onUp);
     };
-  }, [drag, onDrag, onDragEnd]);
+  }, [drag, onDrag, onDragEnd, onSelect]);
 
   const { yaw, elevation } = camera;
 
@@ -187,11 +227,25 @@ export function Chandelier({
   const plate = platePath(yaw, elevation);
   const plateStr = platePathString(plate);
 
+  // Track touch start position on the background so a tap clears selection.
+  const bgTouchRef = useRef<{ x: number; y: number } | null>(null);
+
   return (
-    <div className="chandelier-wrap" onMouseDown={onClear}>
+    <div
+      className="chandelier-wrap"
+      onMouseDown={onClear}
+      onTouchStart={(e) => { bgTouchRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+      onTouchEnd={(e) => {
+        const start = bgTouchRef.current;
+        bgTouchRef.current = null;
+        if (!start) return;
+        const t = e.changedTouches[0];
+        if (t && Math.abs(t.clientX - start.x) + Math.abs(t.clientY - start.y) < 10) onClear();
+      }}
+    >
       <svg
         className="chandelier"
-        viewBox={`0 0 ${SVG_W} ${SVG_H}`}
+        viewBox={viewBox ?? `0 0 ${SVG_W} ${SVG_H}`}
         preserveAspectRatio="xMidYMid meet"
       >
         <defs>
@@ -228,17 +282,22 @@ export function Chandelier({
           .map(({ bulb, top }) => {
             const isSel = selection.has(bulb.id);
             return (
-              <circle
-                key={`hole-${bulb.id}`}
-                cx={top.x}
-                cy={top.y}
-                r={TOP_HOLE_R * top.scale}
-                fill={isSel ? 'var(--select)' : 'var(--paper)'}
-                stroke={isSel ? 'var(--select)' : 'var(--ink-3)'}
-                strokeWidth="0.6"
-                style={{ cursor: 'pointer' }}
+              <g key={`hole-${bulb.id}`} style={{ cursor: 'pointer' }}
                 onMouseDown={(e) => handleTopHoleDown(e, bulb)}
-              />
+                onTouchStart={(e) => handleTopHoleTouchStart(e, bulb)}
+              >
+                <circle
+                  cx={top.x}
+                  cy={top.y}
+                  r={TOP_HOLE_R * top.scale}
+                  fill={isSel ? 'var(--select)' : 'var(--paper)'}
+                  stroke={isSel ? 'var(--select)' : 'var(--ink-3)'}
+                  strokeWidth="0.6"
+                  style={{ pointerEvents: 'none' }}
+                />
+                {/* Invisible hit target — much larger than the visual dot */}
+                <circle cx={top.x} cy={top.y} r={Math.max(TOP_HOLE_R * top.scale, 22)} fill="transparent" />
+              </g>
             );
           })}
 
@@ -263,7 +322,7 @@ export function Chandelier({
                     : undefined;
 
           return (
-            <g key={bulb.id} className="bulb-row" onMouseDown={(e) => handleBulbDown(e, bulb)}>
+            <g key={bulb.id} className="bulb-row" onMouseDown={(e) => handleBulbDown(e, bulb)} onTouchStart={(e) => handleBulbTouchStart(e, bulb)}>
               {/* Cord */}
               <line
                 x1={top.x}
@@ -363,6 +422,7 @@ export function Chandelier({
                   style={{ pointerEvents: 'none' }}
                 />
               )}
+
             </g>
           );
         })}

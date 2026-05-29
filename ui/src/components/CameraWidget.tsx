@@ -9,7 +9,7 @@ type Props = {
 };
 
 export function CameraWidget({ camera, setCamera }: Props) {
-  const startDrag = useOrbitDrag(camera, setCamera);
+  const { onMouseDown: startDrag } = useOrbitDrag(camera, setCamera);
 
   // Visualize current camera as a small sphere with a dot.
   const r = 26;

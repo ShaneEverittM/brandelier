@@ -148,6 +148,7 @@ struct AppState {
     dimmer: Arc<Mutex<f64>>,
     disable_ctrl: Arc<Mutex<DisableAllCtrl>>,
     position_store: Arc<Mutex<PositionStore>>,
+    controller_session: Arc<Mutex<u64>>,
 }
 
 const POSITION_STORE_FILE: &str = "presets/positions.json";
@@ -377,11 +378,37 @@ async fn topology(State(AppState { topology, .. }): State<AppState>) -> Json<Vec
     Json(topology::bulbs(&topology))
 }
 
+#[derive(serde::Serialize)]
+struct StatusResponse {
+    bulbs: HashMap<BulbId, BulbStatus>,
+    session: u64,
+}
+
 async fn status(
-    State(AppState { driver, .. }): State<AppState>,
-) -> Result<Json<HashMap<BulbId, BulbStatus>>> {
+    State(AppState { driver, controller_session, .. }): State<AppState>,
+) -> Result<Json<StatusResponse>> {
     let map = driver.ask(ReadAll).await?;
-    Ok(Json(map))
+    let session = *controller_session.lock().unwrap();
+    Ok(Json(StatusResponse { bulbs: map, session }))
+}
+
+#[derive(serde::Serialize)]
+struct SessionResponse {
+    token: u64,
+}
+
+async fn get_session(
+    State(AppState { controller_session, .. }): State<AppState>,
+) -> Json<SessionResponse> {
+    Json(SessionResponse { token: *controller_session.lock().unwrap() })
+}
+
+async fn claim_session(
+    State(AppState { controller_session, .. }): State<AppState>,
+) -> Json<SessionResponse> {
+    let mut s = controller_session.lock().unwrap();
+    *s += 1;
+    Json(SessionResponse { token: *s })
 }
 
 async fn zero(
@@ -795,6 +822,7 @@ async fn main() -> Result<()> {
         dimmer: Arc::new(Mutex::new(settings.dimmer)),
         disable_ctrl: disable_ctrl.clone(),
         position_store: position_store.clone(),
+        controller_session: Arc::new(Mutex::new(0)),
     };
 
     tokio::spawn(disable_all_monitor(
@@ -828,6 +856,7 @@ async fn main() -> Result<()> {
             "/presets/{kind}/{name}",
             get(get_preset_kind).delete(delete_preset_kind),
         )
+        .route("/session", get(get_session).post(claim_session))
         .route("/groups", get(get_groups).post(save_groups))
         .route("/settings", get(get_settings))
         .route("/settings/max-length", post(set_max_length))

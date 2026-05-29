@@ -26,6 +26,10 @@
   box-sizing: border-box;
 }
 
+button, input, select {
+  touch-action: manipulation;
+}
+
 html,
 body {
   margin: 0;
@@ -190,6 +194,7 @@ body {
 .stage {
   position: relative;
   overflow: hidden;
+  touch-action: none;
   background:
     radial-gradient(
       ellipse 60% 40% at 50% 25%,
@@ -869,6 +874,41 @@ body {
   cursor: pointer;
 }
 
+.superseded-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.superseded-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 36px;
+  background: var(--paper-2);
+  border: 0.5px solid var(--rule);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+.superseded-title {
+  font: 500 14px/1.4 var(--sans);
+  color: var(--ink);
+}
+
+.superseded-action {
+  font: 400 12px/1 var(--mono);
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .stop-btn {
   color: oklch(0.65 0.18 25);
 }
@@ -876,22 +916,151 @@ body {
   color: oklch(0.75 0.2 25);
 }
 
-/* Responsive */
-@media (max-width: 900px) {
+/* ── Responsive / Mobile ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Stack layout: header → stage → dimmer strip (rail is a fixed overlay) */
   .app {
-    grid-template-rows: 56px 1fr auto;
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr 44px;
+    height: 100vh;
+    width: 100vw;
   }
+
+  /* Topbar wraps: brand + actions on line 1, modebar full-width on line 2 */
   .topbar {
+    grid-row: 1;
     grid-column: 1;
+    flex-wrap: wrap;
+    padding: 0 10px;
+    height: auto;
+    gap: 0;
   }
-  .stage {
-    border-right: 0;
+
+  .brand {
+    flex: 1;
+    min-width: 0;
   }
-  .rail {
-    grid-column: 1;
-    border-left: 0;
+
+  .modebar {
+    order: 10; /* always last in flex row → wraps to its own line */
+    width: 100%;
+    border-radius: 0;
+    background: transparent;
+    border: none;
     border-top: 0.5px solid var(--rule);
-    max-height: 40vh;
+    padding: 4px 0;
+    gap: 0;
+    margin: 0 -10px;
+    width: calc(100% + 20px);
+  }
+
+  .modebar button {
+    flex: 1;
+    border-radius: 0;
+    text-align: center;
+  }
+
+  .stage {
+    grid-row: 2;
+    grid-column: 1;
+    border-right: 0;
+    min-height: 0;
+  }
+
+  .dimmer-strip {
+    grid-row: 3;
+    grid-column: 1;
+    flex-direction: row;
+    align-items: center;
+    border-right: 0;
+    border-top: 0.5px solid var(--rule);
+    border-bottom: 0.5px solid var(--rule);
+    height: 44px;
+  }
+
+  .dimmer-strip input[type='range'] {
+    writing-mode: horizontal-tb;
+    direction: ltr;
+    flex: 1;
+    min-height: unset;
+    height: auto;
+    width: auto;
+    margin: 0 10px;
+  }
+
+  .dimmer-strip .dimmer-label {
+    height: 100%;
+    width: 44px;
+    flex-shrink: 0;
+    border-top: 0;
+    border-left: 0.5px solid var(--rule);
+  }
+
+  .rail {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(85vw, 360px);
+    max-height: none;
+    overflow-y: auto;
+    border-left: 0.5px solid var(--rule);
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+    transform: translateX(110%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 20;
+  }
+
+  .rail.rail-open {
+    transform: translateX(0);
+  }
+
+  .rail-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 19;
+  }
+
+  /* Topbar: compact to fit phone width */
+  .brand {
+    font-size: 13px;
+    gap: 8px;
+    padding: 8px 0;
+  }
+  .brand em {
+    display: none;
+  }
+  .broadcast {
+    display: none;
+  }
+  .modebar button {
+    padding: 9px 4px;
+    font-size: 10px;
+  }
+  .topbar-right {
+    gap: 4px;
+    padding: 8px 0;
+  }
+
+  /* Stage overlays: hide/shrink to keep chandelier unobstructed */
+  .stage-help {
+    display: none;
+  }
+  .stage-meta {
+    top: 6px;
+    left: 8px;
+    font-size: 9px;
+  }
+
+  /* Camera widget: hide on mobile */
+  .camera-widget {
+    display: none;
+  }
+
+  /* Chandelier SVG: fill the full stage */
+  .chandelier {
+    width: min(98%, 920px);
+    height: 98%;
   }
 }
