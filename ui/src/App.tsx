@@ -83,10 +83,12 @@ function App() {
   const maxLengthSynced = useRef(false);
 
   const [startupBrightness, setStartupBrightness] = useState(1.0);
+  const [kpPos, setKpPos] = useState(3.0);
+  const [maxIps, setMaxIps] = useState(1.2);
 
   const loadSettings = useCallback(() => {
     fetch('/api/settings')
-      .then((r) => r.json() as Promise<{ max_length_in: number; dimmer?: number; startup_brightness?: number }>)
+      .then((r) => r.json() as Promise<{ max_length_in: number; dimmer?: number; startup_brightness?: number; kp_pos?: number; max_ips?: number }>)
       .then((data) => {
         maxLengthSynced.current = true;
         setMaxLength(data.max_length_in);
@@ -97,6 +99,8 @@ function App() {
         if (data.startup_brightness !== undefined) {
           setStartupBrightness(data.startup_brightness);
         }
+        if (data.kp_pos !== undefined) setKpPos(data.kp_pos);
+        if (data.max_ips !== undefined) setMaxIps(data.max_ips);
       })
       .catch(console.error);
   }, []);
@@ -989,6 +993,60 @@ function App() {
               <div className="settings-range-labels">
                 <span>0%</span>
                 <span>100%</span>
+              </div>
+            </div>
+            <div className="settings-row">
+              <label className="settings-label">
+                Position gain (Kp)
+                <span className="settings-value">{kpPos.toFixed(1)}</span>
+              </label>
+              <input
+                type="range"
+                min={0.5}
+                max={6}
+                step={0.1}
+                value={kpPos}
+                onChange={(e) => setKpPos(parseFloat(e.target.value))}
+                onPointerUp={(e) => {
+                  const kp_pos = parseFloat((e.target as HTMLInputElement).value);
+                  void fetch('/api/settings/kp-pos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ kp_pos }),
+                  }).catch(console.error);
+                }}
+                className="settings-slider"
+              />
+              <div className="settings-range-labels">
+                <span>0.5</span>
+                <span>10</span>
+              </div>
+            </div>
+            <div className="settings-row">
+              <label className="settings-label">
+                Max speed
+                <span className="settings-value">{maxIps.toFixed(1)} in/s</span>
+              </label>
+              <input
+                type="range"
+                min={0.1}
+                max={2.4}
+                step={0.1}
+                value={maxIps}
+                onChange={(e) => setMaxIps(parseFloat(e.target.value))}
+                onPointerUp={(e) => {
+                  const max_ips = parseFloat((e.target as HTMLInputElement).value);
+                  void fetch('/api/settings/max-ips', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ max_ips }),
+                  }).catch(console.error);
+                }}
+                className="settings-slider"
+              />
+              <div className="settings-range-labels">
+                <span>0.1 in/s</span>
+                <span>2.4 in/s</span>
               </div>
             </div>
           </CollapsibleSection>

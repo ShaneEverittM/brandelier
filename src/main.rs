@@ -39,6 +39,8 @@ use crate::driver::Stop;
 use crate::driver::Zero;
 use crate::driver::ZeroSome;
 use crate::driver::ToggleLightSome;
+use crate::driver::SetKpPos;
+use crate::driver::SetMaxIps;
 use crate::i2c::Bus;
 use crate::topology::BulbId;
 use crate::topology::BulbSlot;
@@ -80,6 +82,12 @@ pub enum Error {
 
     #[error(transparent)]
     ToggleLightSomeError(#[from] SendError<ToggleLightSome, driver::Error>),
+
+    #[error(transparent)]
+    SetKpPosError(#[from] SendError<SetKpPos, driver::Error>),
+
+    #[error(transparent)]
+    SetMaxIpsError(#[from] SendError<SetMaxIps, driver::Error>),
 
     #[error(transparent)]
     ReadAllError(#[from] SendError<ReadAll, driver::Error>),
@@ -156,6 +164,10 @@ struct Settings {
     dimmer: f64,
     #[serde(default = "Settings::default_startup_brightness")]
     startup_brightness: f64,
+    #[serde(default = "Settings::default_kp_pos")]
+    kp_pos: f64,
+    #[serde(default = "Settings::default_max_ips")]
+    max_ips: f64,
 }
 
 impl Default for Settings {
@@ -164,17 +176,17 @@ impl Default for Settings {
             max_length_in: 10.0,
             dimmer: 1.0,
             startup_brightness: 1.0,
+            kp_pos: 3.0,
+            max_ips: 1.2,
         }
     }
 }
 
 impl Settings {
-    fn default_dimmer() -> f64 {
-        1.0
-    }
-    fn default_startup_brightness() -> f64 {
-        1.0
-    }
+    fn default_dimmer() -> f64 { 1.0 }
+    fn default_startup_brightness() -> f64 { 1.0 }
+    fn default_kp_pos() -> f64 { 3.0 }
+    fn default_max_ips() -> f64 { 1.2 }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -484,6 +496,40 @@ async fn set_startup_brightness(
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+struct KpPosBody {
+    kp_pos: f64,
+}
+
+async fn set_kp_pos(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(body): Json<KpPosBody>,
+) -> Result<()> {
+    driver.ask(SetKpPos { kp_pos: body.kp_pos }).await?;
+    let mut settings = load_settings();
+    settings.kp_pos = body.kp_pos;
+    std::fs::create_dir_all("presets")?;
+    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&settings)?)?;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct MaxIpsBody {
+    max_ips: f64,
+}
+
+async fn set_max_ips(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(body): Json<MaxIpsBody>,
+) -> Result<()> {
+    driver.ask(SetMaxIps { max_ips: body.max_ips }).await?;
+    let mut settings = load_settings();
+    settings.max_ips = body.max_ips;
+    std::fs::create_dir_all("presets")?;
+    std::fs::write(SETTINGS_FILE, serde_json::to_string_pretty(&settings)?)?;
+    Ok(())
+}
+
 /// Static UI assets bundled at compile time.
 ///
 /// In release builds these are baked into the binary (single artifact for
@@ -709,6 +755,8 @@ async fn main() -> Result<()> {
         let driver = driver.clone();
         let positions = position_store_data.positions.clone();
         let max_in = settings.max_length_in;
+        let kp_pos = settings.kp_pos;
+        let max_ips = settings.max_ips;
         tokio::spawn(async move {
             if needs_zero {
                 if let Err(e) = driver.ask(Zero).await {
@@ -717,9 +765,17 @@ async fn main() -> Result<()> {
                 }
                 if let Err(e) = driver.ask(ConfigureMaxExt { max_in }).await {
                     tracing::error!("Startup configure failed: {e}");
+                    return;
                 }
             } else if let Err(e) = driver.ask(TellPositions { positions, max_in }).await {
                 tracing::error!("Startup tell-positions failed: {e}");
+                return;
+            }
+            if let Err(e) = driver.ask(SetKpPos { kp_pos }).await {
+                tracing::error!("Startup set_kp_pos failed: {e}");
+            }
+            if let Err(e) = driver.ask(SetMaxIps { max_ips }).await {
+                tracing::error!("Startup set_max_ips failed: {e}");
             }
         });
     }
@@ -777,6 +833,8 @@ async fn main() -> Result<()> {
         .route("/settings/max-length", post(set_max_length))
         .route("/settings/dimmer", post(set_dimmer))
         .route("/settings/startup-brightness", post(set_startup_brightness))
+        .route("/settings/kp-pos", post(set_kp_pos))
+        .route("/settings/max-ips", post(set_max_ips))
         .fallback(|| async { StatusCode::NOT_FOUND });
 
     let router = Router::new()

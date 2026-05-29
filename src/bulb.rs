@@ -47,12 +47,10 @@ pub enum Command {
     ToggleLight {
         extension: f64,
     } = 0x03,
-    #[expect(unused)]
     SetKpPos {
         extension: f64,
         kp_pos: f64,
     } = 0x07,
-    #[expect(unused)]
     SetMaxSpeed {
         extension: f64,
         speed: f64,

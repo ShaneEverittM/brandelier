@@ -487,6 +487,48 @@ impl Message<SetStartBrightness> for Driver {
     }
 }
 
+pub struct SetKpPos {
+    pub kp_pos: f64,
+}
+
+impl Message<SetKpPos> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, msg: SetKpPos, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for bulb in state.bulbs.values_mut() {
+            bulb.write(Command::SetKpPos {
+                extension: bulb.real_extension(),
+                kp_pos: msg.kp_pos,
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        Ok(())
+    }
+}
+
+pub struct SetMaxIps {
+    pub max_ips: f64,
+}
+
+impl Message<SetMaxIps> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, msg: SetMaxIps, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for bulb in state.bulbs.values_mut() {
+            bulb.write(Command::SetMaxSpeed {
+                extension: bulb.real_extension(),
+                speed: msg.max_ips,
+            })
+            .await?;
+        }
+        self.mode = Mode::Idle { state };
+        Ok(())
+    }
+}
+
 impl Driver {
     pub fn new(
         bus: &ActorRef<i2c::Bus>,
