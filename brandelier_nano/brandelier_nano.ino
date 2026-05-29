@@ -43,7 +43,7 @@ float min_ips = MIN_IPS;
 #define SPIRAL_START_ANGLE 129.459                   // radians to reach a spiral wrap of r=1.91
 #define STARTING_SPIRAL_LENGTH 123.678               // inches
 const float ticks_to_radians = 2 * M_PI / 200 / 60;  // 2pi radians in a revolution, 100 line encoder double counted, 60 tooth worm gear
-long max_encoder = 100;
+long max_encoder = 1000;
 
 const bool verbose = false;
 
@@ -54,6 +54,7 @@ uint8_t payload = 0;
 uint8_t special = 0;
 uint8_t brightness = 100;
 bool LED_on = true;
+bool stopped = true;
 bool currently_zeroing = false;
 bool disable_all = false;
 bool hit_max_speed_warning = false;
@@ -150,7 +151,7 @@ void receive_event(uint8_t howMany) {
 void request_event() {  // dump all info when anything is requested
   uint8_t int_position = last_real_length;
   uint8_t frac_position = (last_real_length - int_position) * 256;
-  uint8_t packed_speed = real_speed * 32;  // 8 ips is around the max speed. Leaves 5 bits for fractional speed
+  uint8_t packed_speed = real_speed * 32 * !stopped;  // 8 ips is around the max speed. Leaves 5 bits for fractional speed
   uint8_t packed_data = LED_on | currently_zeroing << 1 | disable_all << 2 | hit_max_speed_warning << 3;
   Wire.write(int_position);
   Wire.write(frac_position);
@@ -264,9 +265,11 @@ double inches_to_ticks(double inches) {  // Newton's method ticks_to_inches beca
 
 void run_at_speed_goal() {
   if (abs(speed_goal) < min_ips) {
+    stopped = true;
     min_ips = MIN_IPS + 0.003;
     run_motor(0);
   } else if (speedPID.Compute()) {
+    stopped = false;
     min_ips = MIN_IPS;
     run_motor(analog_write_val);
     double real_length = ticks_to_inches(encoder_val);

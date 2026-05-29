@@ -1003,6 +1003,13 @@ function App() {
                 bulbStatus={bulbStatus}
                 maxLength={maxLength}
                 onClear={handleClear}
+                onToggleLight={(ids) => {
+                  void fetch('/api/toggle-light', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(ids),
+                  }).catch((err) => console.error('Failed to toggle light:', err));
+                }}
                 onZero={() => {
                   const payload: Record<string, { pos: number; bright: number }> = {};
                   selection.forEach((id) => {

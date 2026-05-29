@@ -44,6 +44,9 @@ pub enum Command {
     TellPosition {
         extension: f64,
     } = 0x02,
+    ToggleLight {
+        extension: f64,
+    } = 0x03,
     #[expect(unused)]
     SetKpPos {
         extension: f64,
@@ -79,7 +82,8 @@ impl Command {
         | SetKpPos { extension, .. }
         | SetMaxSpeed { extension, .. }
         | Zero { extension }
-        | SetMaxExtension { extension, .. }) = *self;
+        | SetMaxExtension { extension, .. }
+        | ToggleLight { extension }) = *self;
 
         extension
     }
@@ -93,7 +97,9 @@ impl Command {
         use Command::*;
 
         match self {
-            SetBrightness { brightness, .. } | SetStartBrightness { brightness, .. } => Some(*brightness as u8),
+            SetBrightness { brightness, .. } | SetStartBrightness { brightness, .. } => {
+                Some(*brightness as u8)
+            }
             SetKpPos { kp_pos, .. } => Some((*kp_pos * 10.0) as u8),
             SetMaxSpeed { speed, .. } => Some((*speed * 10.0) as u8),
             SetMaxExtension { max, .. } => Some(max.clamp(0.0, 115.0) as u8),
@@ -119,7 +125,7 @@ pub struct Response {
     pub extension: f64,
     pub brightness: u8,
     pub speed: f64,
-    pub light: bool,
+    pub light_on: bool,
     pub zeroing: bool,
     pub disable_all: bool,
     pub max_speed_warn: bool,
@@ -137,7 +143,7 @@ impl Response {
             extension: (data[0] as f64) + (data[1] as f64) / 256.0,
             brightness: data[2],
             speed: (data[3] as f64) / 32.0,
-            light: data[4] & 0b0001 != 0,
+            light_on: data[4] & 0b0001 != 0,
             zeroing: data[4] & 0b0010 != 0,
             disable_all: data[4] & 0b0100 != 0,
             max_speed_warn: data[4] & 0b1000 != 0,
@@ -180,7 +186,7 @@ impl Bulb {
             real_extension: 0.0,
             real_speed: 0.0,
             max_speed: 1.0, // this needs to get updated whenever SetMaxExtension is run
-            light_on: false,
+            light_on: true,
             zeroing: false,
             disable_all: false,
             max_speed_warn: false,
@@ -228,7 +234,7 @@ impl Bulb {
     }
 
     pub async fn zero(&mut self) -> Result<()> {
-        self.write(Command::Zero { extension: 0.0 }).await
+        self.write(Command::Zero { extension: 0.1 }).await
     }
 
     pub async fn refresh(&mut self, report_drift: bool) -> Result<()> {
@@ -242,7 +248,7 @@ impl Bulb {
         self.real_extension = response.extension;
         self.real_brightness = response.brightness;
         self.real_speed = response.speed;
-        self.light_on = response.light;
+        self.light_on = response.light_on;
         self.zeroing = response.zeroing;
         self.disable_all = response.disable_all;
         self.max_speed_warn = response.max_speed_warn;

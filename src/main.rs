@@ -38,6 +38,7 @@ use crate::driver::TellPositions;
 use crate::driver::Stop;
 use crate::driver::Zero;
 use crate::driver::ZeroSome;
+use crate::driver::ToggleLightSome;
 use crate::i2c::Bus;
 use crate::topology::BulbId;
 use crate::topology::BulbSlot;
@@ -76,6 +77,9 @@ pub enum Error {
 
     #[error(transparent)]
     ZeroSomeError(#[from] SendError<ZeroSome, driver::Error>),
+
+    #[error(transparent)]
+    ToggleLightSomeError(#[from] SendError<ToggleLightSome, driver::Error>),
 
     #[error(transparent)]
     ReadAllError(#[from] SendError<ReadAll, driver::Error>),
@@ -380,6 +384,14 @@ async fn zero(
         }
     }
     driver.ask(ZeroSome { bulbs }).await?;
+    Ok(())
+}
+
+async fn toggle_light(
+    State(AppState { driver, .. }): State<AppState>,
+    Json(ids): Json<Vec<BulbId>>,
+) -> Result<()> {
+    driver.ask(ToggleLightSome { ids }).await?;
     Ok(())
 }
 
@@ -693,14 +705,23 @@ async fn main() -> Result<()> {
     let position_store_data = PositionStore::load();
     let needs_zero = position_store_data.bulbs_moving || position_store_data.positions.is_empty();
 
-    if needs_zero {
-        driver.ask(Zero).await?;
-        driver.ask(ConfigureMaxExt { max_in: settings.max_length_in }).await?;
-    } else {
-        driver.ask(TellPositions {
-            positions: position_store_data.positions.clone(),
-            max_in: settings.max_length_in,
-        }).await?;
+    {
+        let driver = driver.clone();
+        let positions = position_store_data.positions.clone();
+        let max_in = settings.max_length_in;
+        tokio::spawn(async move {
+            if needs_zero {
+                if let Err(e) = driver.ask(Zero).await {
+                    tracing::error!("Startup zero failed: {e}");
+                    return;
+                }
+                if let Err(e) = driver.ask(ConfigureMaxExt { max_in }).await {
+                    tracing::error!("Startup configure failed: {e}");
+                }
+            } else if let Err(e) = driver.ask(TellPositions { positions, max_in }).await {
+                tracing::error!("Startup tell-positions failed: {e}");
+            }
+        });
     }
 
     let position_store = Arc::new(Mutex::new(position_store_data));
@@ -738,6 +759,7 @@ async fn main() -> Result<()> {
         .route("/status", get(status))
         .route("/bulbs", post(bulbs))
         .route("/zero", post(zero))
+        .route("/toggle-light", post(toggle_light))
         .route("/wave", get(wave_status).post(wave_start).delete(wave_stop))
         .route("/disable-all", get(get_disable_all).post(post_disable_all))
         .route("/disable", post(post_trigger_disable))

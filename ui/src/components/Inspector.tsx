@@ -7,22 +7,25 @@ type Props = {
   maxLength: number;
   onClear: () => void;
   onZero: () => void;
+  onToggleLight?: (ids: BulbId[]) => void;
 };
 
 const STATUS_NOTICES: {
   key: keyof NonNullable<BulbStatusMap[string]>;
+  negate?: true;
   color: string;
   label: string;
   description: string;
 }[] = [
-  { key: 'read_error',      color: 'oklch(0.65 0.28 330)', label: 'Not responding',      description: 'Bulb is not responding over I2C. Check power and connections.' },
-  { key: 'disabled',        color: 'oklch(0.50 0 0)',      label: 'Disabled',            description: 'The disable switch on this bulb is engaged.' },
-  { key: 'max_speed_warn',  color: 'oklch(0.72 0.22 50)',  label: 'Max speed',           description: 'Motor is running at full speed. Check for obstructions or a stuck cord.' },
-  { key: 'zeroing',         color: 'oklch(0.65 0.20 230)', label: 'Zeroing',             description: 'Bulb is homing to its reference position.' },
-  { key: 'drift_detected',  color: 'oklch(0.80 0.18 85)',  label: 'Drift detected',      description: 'Bulb is not reaching its target position — cord may be slack.' },
-];
+    { key: 'read_error', color: 'oklch(0.65 0.28 330)', label: 'Not responding', description: 'Bulb is not responding over I2C. Check power and connections.' },
+    { key: 'disabled', color: 'oklch(0.50 0 0)', label: 'Disabled', description: 'The disable switch on this bulb is engaged.' },
+    { key: 'light_on', negate: true, color: 'oklch(0.30 0.10 255)', label: 'Light off', description: 'Bulb LED was manually turned off. Pull bulb once or tap notification to turn back on.' },
+    { key: 'max_speed_warn', color: 'oklch(0.72 0.22 50)', label: 'Max speed', description: 'Motor is running at full speed. Check for obstructions or a stuck cord.' },
+    { key: 'zeroing', color: 'oklch(0.65 0.20 230)', label: 'Zeroing', description: 'Bulb is homing to its reference position.' },
+    { key: 'drift_detected', color: 'oklch(0.80 0.18 85)', label: 'Drift detected', description: 'Bulb is not reaching its target position — cord may be slack.' },
+  ];
 
-export function Inspector({ selectedIds, bulbState, bulbStatus, maxLength, onClear, onZero }: Props) {
+export function Inspector({ selectedIds, bulbState, bulbStatus, maxLength, onClear, onZero, onToggleLight }: Props) {
   const n = selectedIds.size;
   if (n === 0) {
     return (
@@ -45,8 +48,11 @@ export function Inspector({ selectedIds, bulbState, bulbStatus, maxLength, onCle
 
   const activeNotices = bulbStatus
     ? STATUS_NOTICES.filter((notice) =>
-        [...selectedIds].some((id) => bulbStatus[id]?.[notice.key])
-      )
+      [...selectedIds].some((id) => {
+        const v = bulbStatus[id]?.[notice.key];
+        return notice.negate ? !v : v;
+      })
+    )
     : [];
 
   return (
@@ -69,15 +75,28 @@ export function Inspector({ selectedIds, bulbState, bulbStatus, maxLength, onCle
       </div>
       {activeNotices.length > 0 && (
         <div className="inspector-notices">
-          {activeNotices.map((notice) => (
-            <div key={notice.key} className="inspector-notice" style={{ borderColor: notice.color }}>
+          {activeNotices.map((notice) => {
+            const handleClick = notice.key === 'light_on' && onToggleLight
+              ? () => {
+                  const ids = [...selectedIds].filter((id) => bulbStatus && !bulbStatus[id]?.light_on);
+                  onToggleLight(ids);
+                }
+              : undefined;
+            return (
+            <div
+              key={notice.key}
+              className="inspector-notice"
+              style={{ borderColor: notice.color, cursor: handleClick ? 'pointer' : undefined }}
+              onClick={handleClick}
+            >
               <span className="inspector-notice-dot" style={{ background: notice.color }} />
               <div>
                 <div className="inspector-notice-label">{notice.label}</div>
                 <div className="inspector-notice-desc">{notice.description}</div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <div className="action-row">

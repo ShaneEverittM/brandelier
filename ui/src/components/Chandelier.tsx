@@ -205,6 +205,11 @@ export function Chandelier({
             <stop offset="80%" stopColor="var(--paper-3)" />
             <stop offset="100%" stopColor="var(--ink-4)" stopOpacity="0.6" />
           </radialGradient>
+          <radialGradient id="bulb-light-off" cx="50%" cy="40%" r="55%">
+            <stop offset="0%" stopColor="oklch(0.30 0.10 255)" />
+            <stop offset="60%" stopColor="oklch(0.20 0.08 260)" />
+            <stop offset="100%" stopColor="oklch(0.12 0.05 265)" />
+          </radialGradient>
           <filter id="big-glow" x="-200%" y="-200%" width="500%" height="500%">
             <feGaussianBlur stdDeviation="14" />
           </filter>
@@ -244,6 +249,7 @@ export function Chandelier({
           const opacity = state.bright;
           const r = BULB_R_BASE * bot.scale;
           const hw = bulbStatus?.[bulb.id];
+          const lightOff = hw != null && !hw.light_on;
           const statusColor = hw?.read_error
             ? 'oklch(0.65 0.28 330)'
             : hw?.disabled
@@ -309,7 +315,7 @@ export function Chandelier({
                     cx={bot.x}
                     cy={bot.y}
                     r={r}
-                    fill={isOn ? 'url(#bulb-glow)' : 'url(#bulb-off)'}
+                    fill={lightOff ? 'url(#bulb-light-off)' : isOn ? 'url(#bulb-glow)' : 'url(#bulb-off)'}
                     opacity={isOn ? Math.max(0.4, opacity) : 1}
                   />
                   <circle

@@ -298,6 +298,27 @@ impl Message<ZeroSome> for Driver {
     }
 }
 
+pub struct ToggleLightSome {
+    pub ids: Vec<BulbId>,
+}
+
+impl Message<ToggleLightSome> for Driver {
+    type Reply = Result<()>;
+
+    async fn handle(&mut self, msg: ToggleLightSome, _: &mut Context<Self, Self::Reply>) -> Result<()> {
+        let mut state = self.idle().await?;
+        for id in msg.ids {
+            let Some(bulb) = state.bulbs.get_mut(&id) else {
+                continue;
+            };
+            bulb.write(Command::ToggleLight { extension: 0.0 }).await?;
+        }
+        self.mode = Mode::Idle { state };
+        self.notify_waiters(Ok(()));
+        Ok(())
+    }
+}
+
 /// On startup when stored positions are known: tell each bulb where it is
 /// and configure the max cord length. Avoids a full re-zero.
 pub struct TellPositions {
