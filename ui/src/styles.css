@@ -158,6 +158,13 @@ body {
   background: oklch(0.65 0.18 145);
   animation: pulse 1.6s infinite;
 }
+.broadcast .live.offline {
+  background: oklch(0.60 0.20 25);
+  animation: none;
+}
+.broadcast-offline {
+  color: oklch(0.60 0.20 25);
+}
 
 .iconbtn {
   appearance: none;

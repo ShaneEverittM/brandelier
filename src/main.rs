@@ -106,11 +106,18 @@ pub enum Error {
 
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+
+    #[error("Chandelier is disabled; re-enable it before starting a wave")]
+    Disabled,
 }
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
-        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+        let status = match self {
+            Error::Disabled => StatusCode::CONFLICT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (status, self.to_string()).into_response()
     }
 }
 
@@ -314,10 +321,17 @@ async fn wave_start(
         wave,
         dimmer,
         position_store,
+        disable_ctrl,
         ..
     }): State<AppState>,
     Json(req): Json<wave::StartWaveRequest>,
 ) -> Result<Json<wave::WaveStarted>> {
+    // While disabled, the saved wave in DisabledAllSave is the only wave that
+    // may come back (via restore). Accepting a start here would set bulbs
+    // moving in the dark and later collide with the restored wave.
+    if disable_ctrl.lock().unwrap().disabled {
+        return Err(Error::Disabled);
+    }
     if req.waves.iter().any(|w| w.target == wave::WaveTarget::Extension) {
         let mut store = position_store.lock().unwrap();
         if !store.bulbs_moving {
@@ -341,12 +355,25 @@ async fn wave_start(
     let start = Instant::now();
 
     let config = req.clone();
-    tokio::spawn(wave::run(driver, req, token.clone(), start, dimmer));
+    let handle = tokio::spawn(wave::run(driver, req, token.clone(), start, dimmer));
 
     *wave.lock().unwrap() = Some(WaveRunState {
-        token,
+        token: token.clone(),
         started_at,
         config,
+    });
+
+    // If the task exits without the token being cancelled (unexpected crash/error),
+    // clear the mutex so wave_status correctly reports running: false.
+    let wave_cleanup = wave.clone();
+    tokio::spawn(async move {
+        let _ = handle.await;
+        if token.is_cancelled() { return; }
+        let mut guard = wave_cleanup.lock().unwrap();
+        // Only clear if this is still the same run (same started_at epoch anchor).
+        if guard.as_ref().map(|w| (w.started_at - started_at).abs() < 0.01).unwrap_or(false) {
+            guard.take();
+        }
     });
 
     Ok(Json(wave::WaveStarted { started_at }))
@@ -639,6 +666,13 @@ async fn restore_from_disable(
         ctrl.disabled = false;
         ctrl.saved.take()
     };
+    // Cancel anything still occupying the wave slot before (re)installing the
+    // saved wave. Overwriting the slot without cancelling leaks the running
+    // task — its token is dropped uncancelled, so it drives the bulbs forever
+    // alongside the restored wave.
+    if let Some(old) = wave.lock().unwrap().take() {
+        old.token.cancel();
+    }
     let Some(save) = saved else { return };
     *dimmer.lock().unwrap() = save.dimmer;
     if let Some(mut wave_req) = save.wave_config {

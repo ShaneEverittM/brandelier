@@ -236,6 +236,8 @@ function WaveEditor({ wave, index, isPlaying, groups, onChange, onRemove }: Wave
 type Props = {
   waves: Wave[];
   onWaves: (next: Wave[]) => void;
+  overallSpeed: number;
+  onOverallSpeed: (v: number) => void;
   positionPresets: string[];
   brightnessPresets: string[];
   wavePosPresetName: string | null;
@@ -252,7 +254,7 @@ type Props = {
   onStop: () => void;
 };
 
-export function WavePanel({ waves, onWaves, positionPresets, brightnessPresets, wavePosPresetName, onWavePosPresetName, waveBrightPresetName, onWaveBrightPresetName, groups, wavePresets, onLoadWavePreset, onSaveWavePreset, onDeleteWavePreset, isPlaying, onPlay, onStop }: Props) {
+export function WavePanel({ waves, onWaves, overallSpeed, onOverallSpeed, positionPresets, brightnessPresets, wavePosPresetName, onWavePosPresetName, waveBrightPresetName, onWaveBrightPresetName, groups, wavePresets, onLoadWavePreset, onSaveWavePreset, onDeleteWavePreset, isPlaying, onPlay, onStop }: Props) {
   const [saveName, setSaveName] = useState('');
   const [selectedPreset, setSelectedPreset] = useState('');
 
@@ -343,6 +345,20 @@ export function WavePanel({ waves, onWaves, positionPresets, brightnessPresets, 
           ))}
         </select>
       </div>
+
+      <div className="row" style={{ marginTop: 8 }}>
+        <label>Overall speed</label>
+        <span className="value">{overallSpeed.toFixed(2)}×</span>
+      </div>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.001"
+        value={toQuad(overallSpeed, 0.01, 1)}
+        disabled={isPlaying}
+        onChange={(e) => onOverallSpeed(fromQuad(parseFloat(e.target.value), 0.01, 1))}
+      />
 
       {waves.map((w, i) => (
         <WaveEditor

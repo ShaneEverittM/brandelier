@@ -66,7 +66,12 @@ pub struct StartWaveRequest {
     /// Seconds of elapsed wave time to resume from (preserves time across pause/resume).
     #[serde(default)]
     pub elapsed: f64,
+    /// Global speed multiplier applied on top of individual wave speeds (0.01–1, default 1).
+    #[serde(default = "one_f64")]
+    pub overall_speed: f64,
 }
+
+fn one_f64() -> f64 { 1.0 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +120,7 @@ pub async fn run(
 
     let mut ticker = interval(Duration::from_secs_f64(1.0 / TICK_HZ));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut consecutive_errors: u32 = 0;
 
     loop {
         tokio::select! {
@@ -123,7 +129,7 @@ pub async fn run(
             _ = ticker.tick() => {}
         }
 
-        let t = start.elapsed().as_secs_f64() + req.elapsed;
+        let t = (start.elapsed().as_secs_f64() + req.elapsed) * req.overall_speed;
 
         let mut pos_off: HashMap<&str, f64> = HashMap::new();
         let mut bright_off: HashMap<&str, f64> = HashMap::new();
@@ -199,8 +205,14 @@ pub async fn run(
         }).collect();
 
         if let Err(e) = driver.ask(SetAll { bulbs: commands }).await {
-            warn!("wave tick: driver error: {e}");
-            break;
+            consecutive_errors += 1;
+            warn!("wave tick: driver error ({consecutive_errors}): {e}");
+            if consecutive_errors >= 5 {
+                warn!("wave: stopping after 5 consecutive errors");
+                break;
+            }
+            continue;
         }
+        consecutive_errors = 0;
     }
 }

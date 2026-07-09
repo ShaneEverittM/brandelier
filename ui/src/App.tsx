@@ -34,6 +34,7 @@ function App() {
   const [bulbState, setBulbState] = useState<BulbState>(initialState);
   const [bulbStatus, setBulbStatus] = useState<BulbStatusMap>({});
   const [sceneReady, setSceneReady] = useState(false);
+  const [online, setOnline] = useState(true);
   const [selection, setSelection] = useState<Set<BulbId>>(new Set());
   const [positionPresets, setPositionPresets] = useState<string[]>([]);
   const [brightnessPresets, setBrightnessPresets] = useState<string[]>([]);
@@ -45,6 +46,12 @@ function App() {
   const [mode, setMode] = useState<Mode>('presets');
   const [railOpen, setRailOpen] = useState(false);
   const [superseded, setSuperseded] = useState(false);
+  // Mirror in a ref so interval callbacks read the current value instead of
+  // the one captured when their effect last ran.
+  const supersededRef = useRef(false);
+  useEffect(() => {
+    supersededRef.current = superseded;
+  }, [superseded]);
   const sessionTokenRef = useRef<number | null>(null);
   const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([
@@ -116,8 +123,10 @@ function App() {
     return () => window.removeEventListener('pageshow', onPageShow);
   }, [loadSettings]);
 
-  useEffect(() => {
-    loadSettings();
+  // Adopt the server's wave state wholesale: config, clock anchor, and play
+  // state. Used on mount and when (re)claiming control, so this client never
+  // acts on a stale local picture of what's running.
+  const syncWaveFromServer = useCallback(() => {
     fetch('/api/wave')
       .then((r) => r.json() as Promise<{
         running: boolean;
@@ -128,12 +137,14 @@ function App() {
           brightPreset?: string | null;
           basePos?: Record<string, number>;
           baseBright?: Record<string, number>;
+          overallSpeed?: number;
         };
       }>)
       .then(({ running, startedAt, config }) => {
         if (running && startedAt !== undefined && config) {
           waveServerStartRef.current = startedAt;
           setWaves(config.waves);
+          setOverallSpeed(config.overallSpeed ?? 1);
           setWavePosPresetName(config.posPreset ?? null);
           setWaveBrightPresetName(config.brightPreset ?? null);
           // Seed bulbState from the stored base snapshot so the wave animation's
@@ -152,10 +163,17 @@ function App() {
           }
           setIsPlaying(true);
           setMode('wave');
+        } else {
+          setIsPlaying(false);
         }
       })
       .catch(console.error);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    loadSettings();
+    syncWaveFromServer();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!maxLengthSynced.current) return;
     const id = setTimeout(() => {
@@ -169,6 +187,7 @@ function App() {
   }, [maxLength]);
   const defaultWave: Wave = { pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false, groupId: 'g0' };
   const [waves, setWaves] = useState<Wave[]>([defaultWave]);
+  const [overallSpeed, setOverallSpeed] = useState(1.0);
   const [wavePosPresetName, setWavePosPresetName] = useState<string | null>(null);
   const [waveBrightPresetName, setWaveBrightPresetName] = useState<string | null>(null);
   const wavePosSnapshotRef = useRef<Record<string, { pos: number }> | null>(null);
@@ -217,11 +236,54 @@ function App() {
   const claimSession = useCallback(() => {
     fetch('/api/session', { method: 'POST' })
       .then((r) => r.json() as Promise<{ token: number }>)
-      .then(({ token }) => { sessionTokenRef.current = token; setSuperseded(false); })
+      .then(({ token }) => {
+        sessionTokenRef.current = token;
+        setSuperseded(false);
+        // Local state may be arbitrarily stale after another device was in
+        // control — adopt whatever is actually running before acting again.
+        syncWaveFromServer();
+      })
       .catch(console.error);
-  }, []);
+  }, [syncWaveFromServer]);
 
   useEffect(() => { claimSession(); }, [claimSession]);
+
+  // While a wave is playing, poll /api/wave every 5 s to detect unexpected server-side
+  // stops (e.g. driver error after 5 retries). If the server lost the task, restart it.
+  useEffect(() => {
+    if (!isPlaying) return;
+    const id = setInterval(() => {
+      // A superseded client is an observer: it must never restart a wave the
+      // controlling device stopped on purpose. Likewise while disabled — the
+      // server saved the wave and will restore it itself on re-enable, so a
+      // missing wave is expected, not a crash to recover from.
+      if (supersededRef.current || prevDisabledAllRef.current) return;
+      fetch('/api/wave')
+        .then((r) => r.json() as Promise<{ running: boolean; startedAt?: number }>)
+        .then(({ running, startedAt }) => {
+          if (running && startedAt !== undefined) {
+            waveServerStartRef.current = startedAt; // re-sync clock
+            return;
+          }
+          // Server lost the wave. Before restarting, confirm we still hold the
+          // controller session — the status poll that sets `superseded` only
+          // runs once a second, so this closes the race where another device
+          // claimed control and stopped the wave moments ago.
+          fetch('/api/session')
+            .then((r) => r.json() as Promise<{ token: number }>)
+            .then(({ token }) => {
+              if (sessionTokenRef.current !== null && token !== sessionTokenRef.current) {
+                setSuperseded(true);
+                return;
+              }
+              startWave();
+            })
+            .catch(console.error);
+        })
+        .catch(console.error);
+    }, 5000);
+    return () => clearInterval(id);
+  }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll /api/status on mount (sync pos) then every second (errors / zeroing)
   const initialSyncDone = useRef(false);
@@ -246,8 +308,9 @@ function App() {
             });
             setSceneReady(true);
           }
+          setOnline(true);
         })
-        .catch((err) => console.error('Failed to fetch status:', err));
+        .catch((err) => { console.error('Failed to fetch status:', err); setOnline(false); });
     };
     fetchStatus();
     const id = setInterval(fetchStatus, 1000);
@@ -273,7 +336,10 @@ function App() {
                   setIsPlaying(true);
                 } else {
                   setIsPlaying(false);
-                  pushBulbs(bulbStateRef.current);
+                  // Only the controlling device restores static state; a
+                  // superseded observer pushing its stale positions would
+                  // fight whatever the controller is doing.
+                  if (!supersededRef.current) pushBulbs(bulbStateRef.current);
                 }
               })
               .catch(console.error);
@@ -460,7 +526,7 @@ function App() {
     void fetch('/api/presets/wave', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, state: { waves, posPreset: wavePosPresetName, brightPreset: waveBrightPresetName } }),
+      body: JSON.stringify({ name, state: { waves, posPreset: wavePosPresetName, brightPreset: waveBrightPresetName, overallSpeed } }),
     }).then(fetchWavePresets).catch(console.error);
   };
 
@@ -471,10 +537,11 @@ function App() {
         if (Array.isArray(data)) {
           setWaves(data as Wave[]);
         } else {
-          const d = data as { waves: Wave[]; posPreset?: string | null; brightPreset?: string | null };
+          const d = data as { waves: Wave[]; posPreset?: string | null; brightPreset?: string | null; overallSpeed?: number };
           setWaves(d.waves);
           setWavePosPresetName(d.posPreset ?? null);
           setWaveBrightPresetName(d.brightPreset ?? null);
+          setOverallSpeed(d.overallSpeed ?? 1);
         }
       })
       .catch(console.error);
@@ -513,6 +580,7 @@ function App() {
         posPreset: wavePosPresetName,
         brightPreset: waveBrightPresetName,
         elapsed: waveElapsedRef.current,
+        overallSpeed,
       }),
     })
       .then((r) => r.json() as Promise<{ startedAt: number }>)
@@ -646,7 +714,8 @@ function App() {
 
     const tick = () => {
       // Sync with the server's clock so the visual display matches the hardware.
-      const t = Date.now() / 1000 - waveServerStartRef.current;
+      const tWall = Date.now() / 1000 - waveServerStartRef.current;
+      const t = tWall * overallSpeed;
 
       // Accumulate additive offsets from each wave
       const posOff: Record<string, number> = {};
@@ -723,10 +792,10 @@ function App() {
     raf = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(raf);
-      // Save elapsed so the next resume continues from the same point.
+      // Save wall-clock elapsed so the next resume continues from the same point.
       waveElapsedRef.current = Date.now() / 1000 - waveServerStartRef.current;
     };
-  }, [isPlaying, waves]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, waves, overallSpeed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard
   useEffect(() => {
@@ -814,9 +883,9 @@ function App() {
               <rect x="3" y="3" width="10" height="10" rx="1.5" />
             </svg>
           </button>
-          <span className="broadcast">
-            <span className="live"></span>
-            Broadcasting · 19 fixtures
+          <span className={`broadcast${online ? '' : ' broadcast-offline'}`}>
+            <span className={`live${online ? '' : ' offline'}`}></span>
+            {online ? 'Broadcasting · 19 fixtures' : 'Hardware unavailable'}
           </span>
           <button
             className="iconbtn"
@@ -1205,6 +1274,8 @@ function App() {
                 <WavePanel
                   waves={waves}
                   onWaves={setWaves}
+                  overallSpeed={overallSpeed}
+                  onOverallSpeed={setOverallSpeed}
                   positionPresets={positionPresets}
                   brightnessPresets={brightnessPresets}
                   wavePosPresetName={wavePosPresetName}

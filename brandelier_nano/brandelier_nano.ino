@@ -6,7 +6,6 @@
 #include <CRC.h>
 
 // TODO:
-// Add logic to Pi to use case 3, toggle_light. Indicate that a bulb is switched off by making it glow dark blue. Long press a blue bulb to turn it back on.
 // Bulb occasionally gets stuck at a peak and can't move in the other direction so it errors out - not seen often in wave motion
 
 #define LIMIT_PIN 4
@@ -60,7 +59,7 @@ bool disable_all = false;
 bool hit_max_speed_warning = false;
 
 // PID values
-double speed_goal = 0, real_speed, encoder_val = 0, analog_write_val, last_real_length, setpoint = 0.2;  // positive is in deploy direction
+double speed_goal = 0, real_speed, encoder_val = 0, analog_write_val, last_real_length, setpoint = 0;  // positive is in deploy direction
 // default position is slightly under the stowed position
 double Kp = 20, Ki = 400, Kd = 0, Kp_pos = 3;
 PID speedPID(&real_speed, &analog_write_val, &speed_goal, Kp, Ki, Kd, DIRECT);
