@@ -311,7 +311,7 @@ impl Message<ToggleLightSome> for Driver {
             let Some(bulb) = state.bulbs.get_mut(&id) else {
                 continue;
             };
-            bulb.write(Command::ToggleLight { extension: 0.0 }).await?;
+            bulb.write(Command::ToggleLight { extension: bulb.real_extension() }).await?;
         }
         self.mode = Mode::Idle { state };
         self.notify_waiters(Ok(()));

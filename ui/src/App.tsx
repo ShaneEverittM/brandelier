@@ -10,6 +10,7 @@ import { Inspector } from './components/Inspector';
 import { PresetsPanel } from './components/PresetsPanel';
 import { WavePanel } from './components/WavePanel';
 import { useOrbitDrag } from './hooks/useOrbitDrag.ts';
+import { noiseValue } from './noise';
 import { BULBS } from './topology';
 import type { BulbId, BulbState, BulbStatusMap, Camera, DragDelta, Group, Mode, PresetKind, RenderStyle, Wave } from './types';
 
@@ -185,7 +186,7 @@ function App() {
     }, 300);
     return () => clearTimeout(id);
   }, [maxLength]);
-  const defaultWave: Wave = { pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false, groupId: 'g0' };
+  const defaultWave: Wave = { pattern: 'sine', target: 'extension', amp: 0.1, speed: 1.0, wavelength: 1.0, direction: 0, spinPeriod: 30, spinReverse: false, center: null, decay: 0, minPeriod: 2, seed: 0, spreadDeg: 60, bumpUp: true, phaseDeg: 0, groupId: 'g0' };
   const [waves, setWaves] = useState<Wave[]>([defaultWave]);
   const [overallSpeed, setOverallSpeed] = useState(1.0);
   const [wavePosPresetName, setWavePosPresetName] = useState<string | null>(null);
@@ -754,19 +755,69 @@ function App() {
               }
             });
           });
+        } else if (w.pattern === 'random') {
+          targets.forEach((id) => {
+            const o = noiseValue(w.seed, id, w.minPeriod, t) * w.amp * 0.4;
+            if (w.target === 'brightness') {
+              brightOff[id] = (brightOff[id] ?? 0) + o;
+            } else {
+              posOff[id] = (posOff[id] ?? 0) + o;
+            }
+          });
+        } else if (w.pattern === 'sweep') {
+          const pivot = w.center ? BULBS.find((x) => x.id === w.center) : null;
+          const cx = pivot?.x3 ?? 0;
+          const cz = pivot?.z3 ?? 0;
+          const pivotId = w.center ?? 'c';
+          const period = Math.max(w.spinPeriod, 0.01);
+          const rotDeg = (w.spinReverse ? -1 : 1) * (t / period) * 360 + w.phaseDeg;
+          const spread = Math.min(360, Math.max(0.001, w.spreadDeg));
+          const half = spread / 2;
+          // pos: 0 = high (short cord), 1 = low (long cord) — so a positive
+          // offset *lowers* a bulb. "Up" therefore needs a negative sign.
+          const sign = w.bumpUp ? -1 : 1;
+          targets.forEach((id) => {
+            // The pivot bulb has no defined angle around itself.
+            if (id === pivotId) return;
+            const b = BULBS.find((x) => x.id === id);
+            if (!b) return;
+            const angleDeg = (Math.atan2(b.z3 - cz, b.x3 - cx) * 180) / Math.PI;
+            const delta = (((angleDeg - rotDeg + 180) % 360 + 360) % 360) - 180;
+            if (Math.abs(delta) > half) return;
+            // A full cosine cycle across the sector, rescaled to [0, 1]: 0
+            // at both edges *with zero slope there* (like a real sine
+            // trough), peaking at 1 in the middle. Using half a sine cycle
+            // (0 to π) also starts/ends at 0, but its slope at those points
+            // is nonzero, so it visibly kinks where it meets the flat
+            // "outside sector" region; this doesn't. It only ever adds (or,
+            // with bumpUp = false, only ever subtracts) — never crosses zero.
+            const frac = (delta + half) / spread;
+            const shape = (1 - Math.cos(2 * Math.PI * frac)) / 2;
+            const o = shape * w.amp * sign * 0.4;
+            if (w.target === 'brightness') {
+              brightOff[id] = (brightOff[id] ?? 0) + o;
+            } else {
+              posOff[id] = (posOff[id] ?? 0) + o;
+            }
+          });
         } else {
+          const centerBulb = w.center ? BULBS.find((x) => x.id === w.center) : null;
+          const cx = centerBulb?.x3 ?? 0;
+          const cz = centerBulb?.z3 ?? 0;
           targets.forEach((id) => {
             const b = BULBS.find((x) => x.id === id);
             if (!b) return;
             const dir = (w.direction * Math.PI) / 180;
             const k = (2 * Math.PI) / w.wavelength / 5;
+            const dist = Math.sqrt((b.x3 - cx) * (b.x3 - cx) + (b.z3 - cz) * (b.z3 - cz));
             const phaseOffset =
               w.pattern === 'ripple'
-                ? Math.sqrt(b.x3 * b.x3 + b.z3 * b.z3) * k
+                ? dist * k
                 : (b.x3 * Math.cos(dir) + b.z3 * Math.sin(dir)) * k;
+            const decayFactor = w.pattern === 'ripple' ? Math.exp(-w.decay * dist) : 1;
             const omega = 2 * Math.PI * w.speed * 0.04;
             const v = Math.sin(omega * t - phaseOffset);
-            const o = v * w.amp * 0.4;
+            const o = v * w.amp * decayFactor * 0.4;
             if (w.target === 'brightness') {
               brightOff[id] = (brightOff[id] ?? 0) + o;
             } else {

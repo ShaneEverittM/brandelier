@@ -27,7 +27,7 @@ export type Camera = { yaw: number; elevation: number };
 
 export type PresetKind = 'position' | 'brightness';
 
-export type WavePattern = 'sine' | 'ripple' | 'spin';
+export type WavePattern = 'sine' | 'ripple' | 'spin' | 'random' | 'sweep';
 export type WaveTarget = 'extension' | 'brightness';
 
 export type Wave = {
@@ -39,6 +39,19 @@ export type Wave = {
   direction: number;
   spinPeriod: number;
   spinReverse: boolean;
+  center: BulbId | null;
+  decay: number;
+  /// Minimum seconds between random breakpoints. Only used by 'random'.
+  minPeriod: number;
+  /// Fixed per wave instance so playback is reproducible. Only used by 'random'.
+  seed: number;
+  /// Sector angular width in degrees (0-360). Only used by 'sweep'.
+  spreadDeg: number;
+  /// Whether the sweep bump adds (true) or subtracts (false). Only used by 'sweep'.
+  bumpUp: boolean;
+  /// Starting angular offset in degrees, added on top of the rotation.
+  /// Lets multiple sweeps share a period but stay staggered. Only used by 'sweep'.
+  phaseDeg: number;
   groupId: string | null;
 };
 

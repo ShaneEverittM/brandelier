@@ -2,6 +2,16 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { Group, Wave, WavePattern, WaveTarget } from '../types';
+import { BULBS } from '../topology';
+
+function bulbLabel(id: string): string {
+  if (id === 'c') return 'Center';
+  const inner = id.match(/^r1-(\d+)$/);
+  if (inner) return `Inner ${parseInt(inner[1], 10) + 1}`;
+  const outer = id.match(/^r2-(\d+)$/);
+  if (outer) return `Outer ${parseInt(outer[1], 10) + 1}`;
+  return id;
+}
 
 const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
   { id: 'sine', name: 'Wave', icon: <path d="M2 8 Q 9 1 16 8 T 30 8 T 34 8" /> },
@@ -27,6 +37,21 @@ const PATTERNS: { id: WavePattern; name: string; icon: ReactNode }[] = [
       </g>
     ),
   },
+  {
+    id: 'random',
+    name: 'Random',
+    icon: <path d="M2 8 L7 8 L10 2 L13 14 L16 5 L18 8 L20 8 L23 12 L26 4 L29 8 L34 8" />,
+  },
+  {
+    id: 'sweep',
+    name: 'Sweep',
+    icon: (
+      <g>
+        <circle cx="18" cy="8" r="6" fill="none" />
+        <path d="M18 8 L18 2 A6 6 0 0 1 23.196 5 Z" fill="currentColor" stroke="none" />
+      </g>
+    ),
+  },
 ];
 
 const DEFAULT_WAVE: Wave = {
@@ -38,6 +63,13 @@ const DEFAULT_WAVE: Wave = {
   direction: 0,
   spinPeriod: 30,
   spinReverse: false,
+  center: null,
+  decay: 0,
+  minPeriod: 2,
+  seed: 0,
+  spreadDeg: 60,
+  bumpUp: true,
+  phaseDeg: 0,
   groupId: 'g0',
 };
 
@@ -63,6 +95,8 @@ type WaveEditorProps = {
 function WaveEditor({ wave, index, isPlaying, groups, onChange, onRemove }: WaveEditorProps) {
   const [open, setOpen] = useState(true);
   const isSpin = wave.pattern === 'spin';
+  const isRandom = wave.pattern === 'random';
+  const isSweep = wave.pattern === 'sweep';
 
   return (
     <div className="wave-block">
@@ -94,7 +128,15 @@ function WaveEditor({ wave, index, isPlaying, groups, onChange, onRemove }: Wave
                 className="pattern"
                 aria-pressed={wave.pattern === p.id}
                 disabled={isPlaying}
-                onClick={() => onChange({ ...wave, pattern: p.id })}
+                onClick={() => onChange({
+                  ...wave,
+                  pattern: p.id,
+                  // Reseed on switching into random so each new instance
+                  // wanders differently rather than replaying the same path.
+                  ...(p.id === 'random' && wave.pattern !== 'random'
+                    ? { seed: Math.floor(Math.random() * 0xffffffff) }
+                    : {}),
+                })}
               >
                 <svg viewBox="0 0 36 16">{p.icon}</svg>
                 <span className="pname">{p.name}</span>
@@ -164,6 +206,139 @@ function WaveEditor({ wave, index, isPlaying, groups, onChange, onRemove }: Wave
                 </button>
               </div>
             </>
+          ) : isRandom ? (
+            <>
+              <div className="row">
+                <label>Max amplitude</label>
+                <span className="value">{Math.round(wave.amp * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.01"
+                max="1"
+                step="0.01"
+                value={wave.amp}
+                disabled={isPlaying}
+                onChange={(e) => onChange({ ...wave, amp: parseFloat(e.target.value) })}
+              />
+
+              <div className="row">
+                <label>Minimum period</label>
+                <span className="value">{wave.minPeriod.toFixed(2)}s</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.001"
+                value={toQuad(wave.minPeriod, 0.1, 20)}
+                disabled={isPlaying}
+                onChange={(e) => onChange({ ...wave, minPeriod: fromQuad(parseFloat(e.target.value), 0.1, 20) })}
+              />
+            </>
+          ) : isSweep ? (
+            <>
+              <div className="row">
+                <label>Amplitude</label>
+                <span className="value">{Math.round(wave.amp * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                min="0.01"
+                max="1"
+                step="0.01"
+                value={wave.amp}
+                disabled={isPlaying}
+                onChange={(e) => onChange({ ...wave, amp: parseFloat(e.target.value) })}
+              />
+
+              <div className="row">
+                <label>Spread</label>
+                <span className="value">{wave.spreadDeg}°</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="360"
+                step="1"
+                value={wave.spreadDeg}
+                disabled={isPlaying}
+                onChange={(e) => onChange({ ...wave, spreadDeg: parseInt(e.target.value) })}
+              />
+
+              <div className="row">
+                <label>Phase</label>
+                <span className="value">{wave.phaseDeg}°</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="359"
+                step="1"
+                value={wave.phaseDeg}
+                disabled={isPlaying}
+                onChange={(e) => onChange({ ...wave, phaseDeg: parseInt(e.target.value) })}
+              />
+
+              <div className="row">
+                <label>Rotation period</label>
+                <span className="value">{formatPeriod(wave.spinPeriod)}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.001"
+                  value={toQuad(wave.spinPeriod, 5, 3600)}
+                  disabled={isPlaying}
+                  style={{ flex: 1 }}
+                  onChange={(e) => onChange({ ...wave, spinPeriod: Math.round(fromQuad(parseFloat(e.target.value), 5, 3600)) })}
+                />
+                <button
+                  className="iconbtn"
+                  disabled={isPlaying}
+                  title="Reverse direction"
+                  onClick={() => onChange({ ...wave, spinReverse: !wave.spinReverse })}
+                >
+                  <svg viewBox="0 0 14 14" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                    style={{ transform: wave.spinReverse ? 'scaleX(-1)' : undefined }}>
+                    <path d="M11 7A4 4 0 1 0 7 11" />
+                    <path d="M7 9.5 L9 11 L7 12.5" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="target-radio">
+                {([true, false] as const).map((up) => (
+                  <label key={String(up)} className={wave.bumpUp === up ? 'active' : ''}>
+                    <input
+                      type="radio"
+                      name={`wave-bump-${index}`}
+                      checked={wave.bumpUp === up}
+                      disabled={isPlaying}
+                      onChange={() => onChange({ ...wave, bumpUp: up })}
+                    />
+                    {up ? 'Up' : 'Down'}
+                  </label>
+                ))}
+              </div>
+
+              <div className="wave-select-row">
+                <span className="wave-select-label">Center</span>
+                <select
+                  className="wave-group-select"
+                  value={wave.center ?? ''}
+                  disabled={isPlaying}
+                  onChange={(e) => onChange({ ...wave, center: e.target.value || null })}
+                >
+                  <option value="">Default (center)</option>
+                  {BULBS.map((b) => (
+                    <option key={b.id} value={b.id}>{bulbLabel(b.id)}</option>
+                  ))}
+                </select>
+              </div>
+            </>
           ) : (
             <>
               <div className="row">
@@ -222,6 +397,39 @@ function WaveEditor({ wave, index, isPlaying, groups, onChange, onRemove }: Wave
                     value={wave.direction}
                     disabled={isPlaying}
                     onChange={(e) => onChange({ ...wave, direction: parseInt(e.target.value) })}
+                  />
+                </>
+              )}
+
+              {wave.pattern === 'ripple' && (
+                <>
+                  <div className="wave-select-row">
+                    <span className="wave-select-label">Center</span>
+                    <select
+                      className="wave-group-select"
+                      value={wave.center ?? ''}
+                      disabled={isPlaying}
+                      onChange={(e) => onChange({ ...wave, center: e.target.value || null })}
+                    >
+                      <option value="">Default (center)</option>
+                      {BULBS.map((b) => (
+                        <option key={b.id} value={b.id}>{bulbLabel(b.id)}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="row">
+                    <label>Decay</label>
+                    <span className="value">{wave.decay.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.01"
+                    value={wave.decay}
+                    disabled={isPlaying}
+                    onChange={(e) => onChange({ ...wave, decay: parseFloat(e.target.value) })}
                   />
                 </>
               )}
