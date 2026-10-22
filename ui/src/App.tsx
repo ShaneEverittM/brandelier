@@ -8,11 +8,12 @@ import { CollapsibleSection } from './components/CollapsibleSection';
 import { GroupsPanel } from './components/GroupsPanel';
 import { Inspector } from './components/Inspector';
 import { PresetsPanel } from './components/PresetsPanel';
+import { ScheduleView } from './components/ScheduleView';
 import { WavePanel } from './components/WavePanel';
 import { useOrbitDrag } from './hooks/useOrbitDrag.ts';
 import { noiseValue } from './noise';
 import { BULBS } from './topology';
-import type { BulbId, BulbState, BulbStatusMap, Camera, DragDelta, Group, Mode, PresetKind, RenderStyle, Wave } from './types';
+import type { BulbId, BulbState, BulbStatusMap, Camera, DragDelta, Group, Mode, PresetKind, RenderStyle, ScheduleDoc, Wave } from './types';
 
 const RENDER_STYLE: RenderStyle = 'glow';
 const SHOW_HELP = true;
@@ -83,6 +84,29 @@ function App() {
     }, 300);
     return () => clearTimeout(id);
   }, [groups]);
+
+  const [schedule, setSchedule] = useState<ScheduleDoc>({ enabled: false, entries: [] });
+  const scheduleSynced = useRef(false);
+  useEffect(() => {
+    fetch('/api/schedule')
+      .then((r) => r.json() as Promise<ScheduleDoc>)
+      .then((data) => {
+        scheduleSynced.current = true;
+        if (data) setSchedule(data);
+      })
+      .catch(() => { scheduleSynced.current = true; });
+  }, []);
+  useEffect(() => {
+    if (!scheduleSynced.current) return;
+    const id = setTimeout(() => {
+      void fetch('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(schedule),
+      }).catch(console.error);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [schedule]);
 
   const [disabledAll, setDisabledAll] = useState(false);
   const prevDisabledAllRef = useRef(false);
@@ -419,11 +443,11 @@ function App() {
   };
 
   useEffect(() => {
-    if (mode === 'presets' || mode === 'wave') {
+    if (mode === 'presets' || mode === 'wave' || mode === 'schedule') {
       fetchPositionPresets();
       fetchBrightnessPresets();
     }
-    if (mode === 'wave') {
+    if (mode === 'wave' || mode === 'schedule') {
       fetchWavePresets();
     }
     if (mode !== 'presets' && previewSnapshotRef.current) {
@@ -1277,7 +1301,7 @@ function App() {
               )}
             </CollapsibleSection>
 
-            {mode !== 'wave' && (
+            {mode !== 'wave' && mode !== 'schedule' && (
               <CollapsibleSection title="Groups">
                 <GroupsPanel
                   groups={groups}
@@ -1341,6 +1365,17 @@ function App() {
                   isPlaying={isPlaying}
                   onPlay={startWave}
                   onStop={stopWave}
+                />
+              </section>
+            )}
+
+            {mode === 'schedule' && (
+              <section className="rail-section">
+                <ScheduleView
+                  schedule={schedule}
+                  onSchedule={setSchedule}
+                  positionPresets={positionPresets}
+                  wavePresets={wavePresets}
                 />
               </section>
             )}

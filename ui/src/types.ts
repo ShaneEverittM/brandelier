@@ -64,6 +64,26 @@ export type Group = {
 
 export type RenderStyle = 'flat' | 'glow' | 'wire';
 
+export type ScheduleKind = 'position' | 'wave';
+
+export type ScheduleEntry = {
+  id: string;
+  /// 0 = Sunday .. 6 = Saturday, matching JS Date.getDay().
+  day: number;
+  /// Minutes since midnight (0-1439).
+  startMin: number;
+  /// Minutes; an entry never crosses midnight (startMin + durationMin <= 1440).
+  durationMin: number;
+  kind: ScheduleKind;
+  /// Name of the position or wave preset (matching `kind`) this block plays.
+  preset: string;
+};
+
+export type ScheduleDoc = {
+  enabled: boolean;
+  entries: ScheduleEntry[];
+};
+
 export type Mode = 'presets' | 'wave' | 'schedule' | 'settings';
 
 export type DragAxis = 'x' | 'y' | null;

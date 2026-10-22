@@ -156,6 +156,7 @@ struct AppState {
     disable_ctrl: Arc<Mutex<DisableAllCtrl>>,
     position_store: Arc<Mutex<PositionStore>>,
     controller_session: Arc<Mutex<u64>>,
+    schedule: Arc<Mutex<ScheduleDoc>>,
 }
 
 const POSITION_STORE_FILE: &str = "presets/positions.json";
@@ -164,6 +165,78 @@ const BRIGHTNESS_PRESETS_DIR: &str = "presets/brightness";
 const WAVE_PRESETS_DIR: &str = "presets/wave";
 const SETTINGS_FILE: &str = "presets/settings.json";
 const GROUPS_FILE: &str = "presets/groups.json";
+const SCHEDULE_FILE: &str = "presets/schedule.json";
+
+/// One block on the weekly schedule grid: either jump to a position preset
+/// at the start of the block, or run a wave preset for the block's duration
+/// and stop it when the block ends.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum ScheduleKind {
+    Position,
+    Wave,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleEntry {
+    id: String,
+    /// 0 = Sunday .. 6 = Saturday, matching JS `Date.getDay()` and
+    /// `chrono`'s `num_days_from_sunday()`.
+    day: u8,
+    /// Minutes since midnight (0..1440).
+    start_min: u16,
+    /// Minutes; an entry never crosses midnight, so `start_min + duration_min <= 1440`.
+    duration_min: u16,
+    kind: ScheduleKind,
+    /// Name of the position or wave preset (matching `kind`) this block plays.
+    preset: String,
+}
+
+impl ScheduleEntry {
+    fn week_start(&self) -> u32 { self.day as u32 * 1440 + self.start_min as u32 }
+    fn week_end(&self) -> u32 { self.week_start() + self.duration_min as u32 }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ScheduleDoc {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    entries: Vec<ScheduleEntry>,
+}
+
+impl ScheduleDoc {
+    fn load() -> Self {
+        let mut doc: Self = std::fs::read_to_string(SCHEDULE_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        doc.sanitize();
+        doc
+    }
+
+    fn save(&self) {
+        if let Ok(s) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::create_dir_all("presets");
+            if let Err(e) = std::fs::write(SCHEDULE_FILE, s) {
+                error!("Failed to save schedule: {e}");
+            }
+        }
+    }
+
+    /// Clamp entries to sane bounds so a malformed client (or hand-edited
+    /// file) can't wedge the scheduler in a bad state — never crossing
+    /// midnight, always at least 1 minute long.
+    fn sanitize(&mut self) {
+        for e in &mut self.entries {
+            e.day = e.day.min(6);
+            e.start_min = e.start_min.min(1439);
+            e.duration_min = e.duration_min.clamp(1, 1440 - e.start_min);
+        }
+    }
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Settings {
@@ -315,17 +388,223 @@ async fn set_dimmer_live(
     Ok(())
 }
 
-async fn wave_start(
-    State(AppState {
-        driver,
-        wave,
-        dimmer,
-        position_store,
-        disable_ctrl,
-        ..
-    }): State<AppState>,
-    Json(req): Json<wave::StartWaveRequest>,
-) -> Result<Json<wave::WaveStarted>> {
+async fn get_schedule(State(AppState { schedule, .. }): State<AppState>) -> Json<ScheduleDoc> {
+    Json(schedule.lock().unwrap().clone())
+}
+
+async fn save_schedule(
+    State(AppState { schedule, .. }): State<AppState>,
+    Json(mut body): Json<ScheduleDoc>,
+) -> Result<()> {
+    body.sanitize();
+    body.save();
+    *schedule.lock().unwrap() = body;
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct PosOnly {
+    pos: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct BrightOnly {
+    bright: f64,
+}
+
+/// Apply a saved position preset immediately: pull each bulb's saved
+/// position (falling back to its current one if the preset doesn't mention
+/// it), keep every bulb's current brightness untouched, and push the result.
+async fn apply_position_preset(
+    driver: &ActorRef<Driver>,
+    position_store: &Arc<Mutex<PositionStore>>,
+    name: &str,
+) {
+    let Some(path) = safe_preset_path(POSITION_PRESETS_DIR, name) else { return };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        error!("Scheduled position preset {name:?} not found");
+        return;
+    };
+    let Ok(preset) = serde_json::from_str::<HashMap<BulbId, PosOnly>>(&text) else { return };
+    let Ok(status) = driver.ask(ReadAll).await else { return };
+
+    let bulbs: HashMap<BulbId, BulbCommand> = status
+        .into_iter()
+        .map(|(id, s)| {
+            let pos = preset.get(&id).map(|p| p.pos).unwrap_or(s.pos);
+            (id, BulbCommand { pos, bright: s.bright })
+        })
+        .collect();
+
+    {
+        let mut store = position_store.lock().unwrap();
+        if !store.bulbs_moving {
+            store.bulbs_moving = true;
+            store.save();
+        }
+    }
+    let _ = driver.ask(SetAll { bulbs }).await;
+}
+
+/// Read a saved wave preset file and resolve it into a full
+/// `StartWaveRequest`, mirroring what the frontend's `startWave()` does
+/// client-side: each wave's `groupId` is resolved against the saved groups
+/// (falling back to every bulb — there's no "current selection" concept on
+/// the server), and base position/brightness come from the preset's
+/// referenced position/brightness preset where set, else each bulb's live
+/// state.
+async fn load_wave_preset_request(
+    driver: &ActorRef<Driver>,
+    name: &str,
+) -> Option<wave::StartWaveRequest> {
+    let path = safe_preset_path(WAVE_PRESETS_DIR, name)?;
+    let text = std::fs::read_to_string(&path)
+        .inspect_err(|_| error!("Scheduled wave preset {name:?} not found"))
+        .ok()?;
+    let doc: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let waves_raw = doc.get("waves")?.as_array()?.clone();
+
+    let groups: Vec<serde_json::Value> = std::fs::read_to_string(GROUPS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let status = driver.ask(ReadAll).await.ok()?;
+    let all_ids: Vec<BulbId> = status.keys().cloned().collect();
+
+    let pos_preset_name = doc.get("posPreset").and_then(|v| v.as_str()).map(str::to_owned);
+    let bright_preset_name = doc.get("brightPreset").and_then(|v| v.as_str()).map(str::to_owned);
+    let overall_speed = doc.get("overallSpeed").and_then(|v| v.as_f64()).unwrap_or(1.0);
+
+    let pos_preset: Option<HashMap<BulbId, f64>> = pos_preset_name
+        .as_deref()
+        .and_then(|n| safe_preset_path(POSITION_PRESETS_DIR, n))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<HashMap<BulbId, PosOnly>>(&s).ok())
+        .map(|m| m.into_iter().map(|(k, v)| (k, v.pos)).collect());
+    let bright_preset: Option<HashMap<BulbId, f64>> = bright_preset_name
+        .as_deref()
+        .and_then(|n| safe_preset_path(BRIGHTNESS_PRESETS_DIR, n))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<HashMap<BulbId, BrightOnly>>(&s).ok())
+        .map(|m| m.into_iter().map(|(k, v)| (k, v.bright)).collect());
+
+    let base_pos: HashMap<BulbId, f64> = all_ids
+        .iter()
+        .map(|id| {
+            let v = pos_preset.as_ref().and_then(|m| m.get(id)).copied()
+                .unwrap_or_else(|| status.get(id).map(|s| s.pos).unwrap_or(0.5));
+            (id.clone(), v)
+        })
+        .collect();
+    let base_bright: HashMap<BulbId, f64> = all_ids
+        .iter()
+        .map(|id| {
+            let v = bright_preset.as_ref().and_then(|m| m.get(id)).copied()
+                .unwrap_or_else(|| status.get(id).map(|s| s.bright).unwrap_or(0.0));
+            (id.clone(), v)
+        })
+        .collect();
+
+    let mut waves = Vec::new();
+    for mut wv in waves_raw {
+        let group_id = wv.get("groupId").and_then(|v| v.as_str()).map(str::to_owned);
+        let target_ids: Vec<BulbId> = group_id
+            .as_deref()
+            .and_then(|gid| groups.iter().find(|g| g.get("id").and_then(|v| v.as_str()) == Some(gid)))
+            .and_then(|g| g.get("ids"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
+            .unwrap_or_else(|| all_ids.clone());
+        if let Some(obj) = wv.as_object_mut() {
+            obj.insert("targetIds".to_string(), serde_json::to_value(&target_ids).unwrap());
+        }
+        if let Ok(cfg) = serde_json::from_value::<wave::WaveConfig>(wv) {
+            waves.push(cfg);
+        }
+    }
+    if waves.is_empty() {
+        return None;
+    }
+
+    Some(wave::StartWaveRequest {
+        waves,
+        base_pos,
+        base_bright,
+        pos_preset: pos_preset_name,
+        bright_preset: bright_preset_name,
+        elapsed: 0.0,
+        overall_speed,
+    })
+}
+
+/// Polls once per tick for schedule blocks starting or ending. Active-block
+/// membership is tracked regardless of the follow-schedule toggle or the
+/// disable-all state, so a period spent paused never causes a stale entry to
+/// act on whatever happens to be running once ticking resumes — only the
+/// actions themselves (applying a preset, starting/stopping a wave) are
+/// suppressed while paused.
+async fn schedule_monitor(
+    driver: ActorRef<Driver>,
+    wave: Arc<Mutex<Option<WaveRunState>>>,
+    dimmer: Arc<Mutex<f64>>,
+    disable_ctrl: Arc<Mutex<DisableAllCtrl>>,
+    position_store: Arc<Mutex<PositionStore>>,
+    schedule: Arc<Mutex<ScheduleDoc>>,
+) {
+    use chrono::Datelike;
+    use chrono::Timelike;
+
+    let mut active: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+
+        let doc = schedule.lock().unwrap().clone();
+        let suppress = !doc.enabled || disable_ctrl.lock().unwrap().disabled;
+
+        let now = chrono::Local::now();
+        let week_min = now.weekday().num_days_from_sunday() * 60 * 24 + now.hour() * 60 + now.minute();
+
+        let mut still_active = std::collections::HashSet::new();
+        for entry in &doc.entries {
+            let is_active = week_min >= entry.week_start() && week_min < entry.week_end();
+            if is_active {
+                still_active.insert(entry.id.clone());
+            }
+            if suppress {
+                continue;
+            }
+            if is_active && !active.contains(&entry.id) {
+                // Rising edge: the block just started.
+                match entry.kind {
+                    ScheduleKind::Position => {
+                        apply_position_preset(&driver, &position_store, &entry.preset).await;
+                    }
+                    ScheduleKind::Wave => {
+                        if let Some(req) = load_wave_preset_request(&driver, &entry.preset).await {
+                            let _ = begin_wave(driver.clone(), wave.clone(), dimmer.clone(), &position_store, &disable_ctrl, req).await;
+                        }
+                    }
+                }
+            } else if !is_active && active.contains(&entry.id) && entry.kind == ScheduleKind::Wave {
+                // Falling edge: the block just ended.
+                end_wave(&wave);
+            }
+        }
+        active = still_active;
+    }
+}
+
+/// Shared by the `/wave` POST handler and the scheduler: cancels any
+/// running wave and starts `req` in its place.
+async fn begin_wave(
+    driver: ActorRef<Driver>,
+    wave: Arc<Mutex<Option<WaveRunState>>>,
+    dimmer: Arc<Mutex<f64>>,
+    position_store: &Arc<Mutex<PositionStore>>,
+    disable_ctrl: &Arc<Mutex<DisableAllCtrl>>,
+    req: wave::StartWaveRequest,
+) -> Result<f64> {
     // While disabled, the saved wave in DisabledAllSave is the only wave that
     // may come back (via restore). Accepting a start here would set bulbs
     // moving in the dark and later collide with the restored wave.
@@ -376,13 +655,34 @@ async fn wave_start(
         }
     });
 
+    Ok(started_at)
+}
+
+/// Shared by the `/wave` DELETE handler and the scheduler: cancels whatever
+/// wave is currently running, if any.
+fn end_wave(wave: &Arc<Mutex<Option<WaveRunState>>>) {
+    if let Some(old) = wave.lock().unwrap().take() {
+        old.token.cancel();
+    }
+}
+
+async fn wave_start(
+    State(AppState {
+        driver,
+        wave,
+        dimmer,
+        position_store,
+        disable_ctrl,
+        ..
+    }): State<AppState>,
+    Json(req): Json<wave::StartWaveRequest>,
+) -> Result<Json<wave::WaveStarted>> {
+    let started_at = begin_wave(driver, wave, dimmer, &position_store, &disable_ctrl, req).await?;
     Ok(Json(wave::WaveStarted { started_at }))
 }
 
 async fn wave_stop(State(AppState { wave, .. }): State<AppState>) {
-    if let Some(old) = wave.lock().unwrap().take() {
-        old.token.cancel();
-    }
+    end_wave(&wave);
 }
 
 async fn wave_status(State(AppState { wave, .. }): State<AppState>) -> Json<wave::WaveStatus> {
@@ -857,7 +1157,17 @@ async fn main() -> Result<()> {
         disable_ctrl: disable_ctrl.clone(),
         position_store: position_store.clone(),
         controller_session: Arc::new(Mutex::new(0)),
+        schedule: Arc::new(Mutex::new(ScheduleDoc::load())),
     };
+
+    tokio::spawn(schedule_monitor(
+        driver.clone(),
+        state.wave.clone(),
+        state.dimmer.clone(),
+        disable_ctrl.clone(),
+        position_store.clone(),
+        state.schedule.clone(),
+    ));
 
     tokio::spawn(disable_all_monitor(
         driver.clone(),
@@ -892,6 +1202,7 @@ async fn main() -> Result<()> {
         )
         .route("/session", get(get_session).post(claim_session))
         .route("/groups", get(get_groups).post(save_groups))
+        .route("/schedule", get(get_schedule).post(save_schedule))
         .route("/settings", get(get_settings))
         .route("/settings/max-length", post(set_max_length))
         .route("/settings/dimmer", post(set_dimmer))
